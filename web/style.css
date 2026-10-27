@@ -279,6 +279,54 @@ body {
   }
 }
 
+@media (max-width: 640px) {
+  .app-container {
+    padding: 16px 14px 48px;
+  }
+  .app-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .header-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .card {
+    padding: 20px 16px;
+    border-radius: var(--radius-md);
+  }
+  .dial-inner {
+    width: 216px;
+    height: 216px;
+  }
+  .temp-val {
+    font-size: 2.85rem;
+  }
+  .control-row {
+    flex-direction: column;
+    gap: 14px;
+  }
+  .telemetry-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+  .stat-box {
+    padding: 12px 10px;
+    gap: 10px;
+  }
+  .stat-icon {
+    font-size: 1.35rem;
+  }
+  .stat-value {
+    font-size: 1.15rem;
+  }
+  .chip-btn {
+    padding: 8px 10px;
+    font-size: 0.82rem;
+  }
+}
+
 .card {
   background: var(--bg-card);
   backdrop-filter: blur(16px);
