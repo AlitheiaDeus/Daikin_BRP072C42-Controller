@@ -272,7 +272,16 @@ function renderActiveView(state) {
   activeDeviceName.textContent = state.name;
   activeDeviceIp.textContent = `${state.ip} • Model: ${state.model_type || "aircon"}`;
 
-  // Power
+  // Handle offline state
+  if (state.status === "offline") {
+    btnPower.classList.remove("is-on");
+    labelModeSummary.textContent = "UNIT UNREACHABLE";
+    dialGlow.style.opacity = "0.1";
+    setStatus("error", `Unit Offline: ${state.error || "Timeout"}`);
+    statError.textContent = state.error || "Unreachable";
+    statError.className = "stat-value stat-error";
+    return;
+  }
   if (state.power) {
     btnPower.classList.add("is-on");
     labelModeSummary.textContent = `${(state.mode || "COOL").toUpperCase()} ACTIVE`;

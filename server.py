@@ -21,6 +21,7 @@ class DaikinWebHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
         try:
             self.wfile.write(body)
         except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
@@ -66,7 +67,17 @@ class DaikinWebHandler(BaseHTTPRequestHandler):
                     }
                     return self._send_json(telemetry)
                 
-                return self._send_json(device.get_full_state())
+                try:
+                    return self._send_json(device.get_full_state())
+                except Exception as e:
+                    return self._send_json({
+                        "id": dev_id,
+                        "name": device.name,
+                        "ip": device.ip,
+                        "configured": device.is_configured,
+                        "status": "offline",
+                        "error": str(e)
+                    }, 500)
 
         # Static files
         if path == "/" or path == "":
