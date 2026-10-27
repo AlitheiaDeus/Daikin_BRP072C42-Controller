@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Daikin Local Climate Hub</title>
+  <meta name="description" content="Local LAN controller for Daikin BRP072C42 smart air conditioners without cloud dependency.">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>❄️</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="ambient-glow glow-top"></div>
+  <div class="ambient-glow glow-bottom"></div>
+
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="2" y1="12" x2="22" y2="12"></line>
+            <line x1="12" y1="2" x2="12" y2="22"></line>
+            <path d="m20 16-4-4 4-4"></path>
+            <path d="m4 8 4 4-4 4"></path>
+            <path d="m16 4-4 4-4-4"></path>
+            <path d="m8 20 4-4 4 4"></path>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>DAIKIN <span class="badge-direct">LAN DIRECT</span></h1>
+          <p class="subtitle">BRP072C42 Multi-Unit Controller</p>
+        </div>
+      </div>
+
+      <div class="header-actions">
+        <div class="connection-status" id="connection-status">
+          <span class="status-pulse"></span>
+          <span class="status-text" id="status-text">Connected</span>
+        </div>
+        <button id="btn-refresh" class="icon-button" title="Refresh Telemetry">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Multi-Device Tabs -->
+    <nav class="device-tabs-container">
+      <div class="device-tabs" id="device-tabs">
+        <!-- Rendered by JS -->
+      </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <main class="dashboard-content" id="dashboard-content">
+      <!-- Loading Skeleton / Active View Rendered by JS -->
+      <div class="loading-state" id="loading-state">
+        <div class="spinner"></div>
+        <p>Connecting to Daikin Wi-Fi unit...</p>
+      </div>
+
+      <div id="active-device-view" class="view-panel hidden">
+        <!-- Top Control Deck -->
+        <div class="control-grid">
+          <!-- Main Thermostat Card -->
+          <section class="card thermostat-card">
+            <div class="card-header">
+              <div>
+                <h2 class="card-title" id="active-device-name">Homeroom AC</h2>
+                <p class="card-subtitle" id="active-device-ip">192.168.1.104 • BRP072C42</p>
+              </div>
+              <button id="btn-power" class="power-toggle" aria-label="Toggle Power">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/>
+                </svg>
+              </button>
+            </div>
+
+            <div class="dial-container">
+              <div class="dial-glow" id="dial-glow"></div>
+              <div class="dial-inner">
+                <button id="btn-temp-down" class="temp-stepper-btn" aria-label="Decrease Temperature">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                </button>
+                <div class="temp-display">
+                  <span class="temp-val" id="val-target-temp">24.0</span>
+                  <span class="temp-unit">°C</span>
+                  <div class="temp-label" id="label-mode-summary">COOLING ACTIVE</div>
+                </div>
+                <button id="btn-temp-up" class="temp-stepper-btn" aria-label="Increase Temperature">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <!-- Mode Selector -->
+            <div class="control-section">
+              <label class="section-label">OPERATING MODE</label>
+              <div class="button-group mode-group" id="mode-selector">
+                <button class="chip-btn" data-mode="cool" id="mode-cool">
+                  <span class="chip-icon">❄️</span>
+                  <span>Cool</span>
+                </button>
+                <button class="chip-btn" data-mode="dry" id="mode-dry">
+                  <span class="chip-icon">💧</span>
+                  <span>Dry</span>
+                </button>
+                <button class="chip-btn" data-mode="fan" id="mode-fan">
+                  <span class="chip-icon">🌀</span>
+                  <span>Fan</span>
+                </button>
+                <button class="chip-btn" data-mode="auto" id="mode-auto">
+                  <span class="chip-icon">⚡</span>
+                  <span>Auto</span>
+                </button>
+                <button class="chip-btn" data-mode="heat" id="mode-heat">
+                  <span class="chip-icon">☀️</span>
+                  <span>Heat</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Fan Speed & Swing Controls -->
+            <div class="control-row">
+              <div class="control-section flex-1">
+                <label class="section-label">FAN SPEED</label>
+                <div class="button-group" id="fan-selector">
+                  <button class="chip-btn chip-sm" data-fan="A" id="fan-A">Auto</button>
+                  <button class="chip-btn chip-sm" data-fan="B" id="fan-B">Quiet</button>
+                  <button class="chip-btn chip-sm" data-fan="3" id="fan-3">1</button>
+                  <button class="chip-btn chip-sm" data-fan="4" id="fan-4">2</button>
+                  <button class="chip-btn chip-sm" data-fan="5" id="fan-5">3</button>
+                  <button class="chip-btn chip-sm" data-fan="6" id="fan-6">4</button>
+                  <button class="chip-btn chip-sm" data-fan="7" id="fan-7">5</button>
+                </div>
+              </div>
+
+              <div class="control-section flex-1">
+                <label class="section-label">VANE SWING</label>
+                <div class="button-group" id="swing-selector">
+                  <button class="chip-btn chip-sm" data-swing="0" id="swing-0">Off</button>
+                  <button class="chip-btn chip-sm" data-swing="1" id="swing-1">Vert</button>
+                  <button class="chip-btn chip-sm" data-swing="2" id="swing-2">Horiz</button>
+                  <button class="chip-btn chip-sm" data-swing="3" id="swing-3">3D</button>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Telemetry & Live Sensors -->
+          <section class="card telemetry-card">
+            <h3 class="card-title">Live Hardware Telemetry</h3>
+            <p class="card-subtitle">Direct thermistors & PCB registers (no inference)</p>
+
+            <div class="telemetry-grid">
+              <div class="stat-box">
+                <span class="stat-icon">🏠</span>
+                <div class="stat-meta">
+                  <span class="stat-label">Indoor Room Temp</span>
+                  <div class="stat-value" id="stat-htemp">--<span class="stat-unit">°C</span></div>
+                </div>
+              </div>
+
+              <div class="stat-box">
+                <span class="stat-icon">⛅</span>
+                <div class="stat-meta">
+                  <span class="stat-label">Outdoor Condenser</span>
+                  <div class="stat-value" id="stat-otemp">--<span class="stat-unit">°C</span></div>
+                </div>
+              </div>
+
+              <div class="stat-box">
+                <span class="stat-icon">💧</span>
+                <div class="stat-meta">
+                  <span class="stat-label">Indoor Humidity</span>
+                  <div class="stat-value" id="stat-hhum">--<span class="stat-unit">%</span></div>
+                </div>
+              </div>
+
+              <div class="stat-box">
+                <span class="stat-icon">⚡</span>
+                <div class="stat-meta">
+                  <span class="stat-label">Inverter Compressor</span>
+                  <div class="stat-value" id="stat-cmpfreq">--<span class="stat-unit">Hz</span></div>
+                </div>
+              </div>
+
+              <div class="stat-box">
+                <span class="stat-icon">⏱️</span>
+                <div class="stat-meta">
+                  <span class="stat-label">Today's Runtime</span>
+                  <div class="stat-value" id="stat-runtime">--<span class="stat-unit">m</span></div>
+                </div>
+              </div>
+
+              <div class="stat-box">
+                <span class="stat-icon">🛡️</span>
+                <div class="stat-meta">
+                  <span class="stat-label">Self-Diagnostic Error</span>
+                  <div class="stat-value stat-ok" id="stat-error">0 (Normal)</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Hardware Metadata -->
+            <div class="hardware-info-box">
+              <div class="hw-item">
+                <span class="hw-label">MAC Address</span>
+                <span class="hw-value font-mono" id="hw-mac">--</span>
+              </div>
+              <div class="hw-item">
+                <span class="hw-label">Firmware</span>
+                <span class="hw-value font-mono" id="hw-firmware">--</span>
+              </div>
+              <div class="hw-item">
+                <span class="hw-label">Adapter Protocol</span>
+                <span class="hw-value">BRP072C42 (Legacy TLS)</span>
+              </div>
+              <div class="hw-item">
+                <span class="hw-label">Internal AC Clock</span>
+                <span class="hw-value font-mono" id="hw-clock">--</span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <!-- Unconfigured Device Placeholder View -->
+      <div id="unconfigured-device-view" class="view-panel hidden">
+        <div class="card setup-card">
+          <div class="setup-icon">🔧</div>
+          <h2 id="setup-device-title">Unit Not Configured Yet</h2>
+          <p class="setup-desc">
+            This unit slot is ready in your configuration. To connect this AC, open your configuration file and fill in its IP address and 13-digit sticker key.
+          </p>
+
+          <div class="code-block-preview">
+            <span class="code-file-label">daikin_config.json</span>
+            <pre><code>{
+  "id": "<span id="setup-id-preview">ac_2</span>",
+  "name": "<span id="setup-name-preview">Living Room AC</span>",
+  "ip": "192.168.1.XXX",    <span class="code-comment">// Check your router DHCP list</span>
+  "key": "PLACEHOLDER_KEY"   <span class="code-comment">// From sticker on BRP072C42 box</span>
+}</code></pre>
+          </div>
+
+          <div class="setup-steps">
+            <div class="step-item">
+              <span class="step-number">1</span>
+              <div>
+                <strong>Find the unit's IP:</strong> Look up the DHCP client list in your home Wi-Fi router for <code>DaikinAP...</code> or its MAC address.
+              </div>
+            </div>
+            <div class="step-item">
+              <span class="step-number">2</span>
+              <div>
+                <strong>Get the Key:</strong> Check the photo you took of this unit's internal box for the 13-digit <code>KEY: XXXXXXXXXXXXX</code>.
+              </div>
+            </div>
+            <div class="step-item">
+              <span class="step-number">3</span>
+              <div>
+                <strong>Paste & Save:</strong> Edit <code>daikin_config.json</code>. The server will auto-register it!
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Floating Action Toast -->
+    <div id="toast" class="toast">
+      <span id="toast-message">Command sent</span>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

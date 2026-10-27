@@ -1,0 +1,18 @@
+{
+  "devices": [
+    {
+      "id": "ac_1",
+      "name": "Master Bedroom",
+      "ip": "192.168.1.XXX",
+      "key": "13_DIGIT_KEY_HERE",
+      "uuid": ""
+    },
+    {
+      "id": "ac_2",
+      "name": "Living Room",
+      "ip": "192.168.1.XXX",
+      "key": "13_DIGIT_KEY_HERE",
+      "uuid": ""
+    }
+  ]
+}

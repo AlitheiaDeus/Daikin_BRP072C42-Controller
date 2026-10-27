@@ -1,0 +1,15 @@
+# Private Daikin hardware keys & UUIDs
+daikin_config.json
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Temporary test scripts
+test_handshakes.py
+scratch/
+
+# Environment / OS files
+.DS_Store
+Thumbs.db
