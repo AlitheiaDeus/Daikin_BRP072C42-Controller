@@ -207,6 +207,11 @@ curl -X POST http://localhost:8080/api/devices/ac_1/control \
 
 ---
 
-## License
+## License & Disclaimers
 
-MIT License. Designed for personal and home automation use. Not affiliated with or endorsed by Daikin Industries, Ltd.
+This project is licensed under the **[MIT License](LICENSE)**.
+
+### Legal Notice & Trademark Disclaimer
+- **Non-Affiliation**: This repository is an independent, community-driven open-source project. It is **not** affiliated with, authorized, sponsored, maintained, or endorsed by Daikin Industries, Ltd., or any of its subsidiaries.
+- **Trademarks**: "Daikin", "BRP072C42", "BRP069", and related marks or logos are registered trademarks of Daikin Industries, Ltd. All product names, trademarks, and registered trademarks are property of their respective owners and are used here solely for nominative identification and interoperability purposes.
+- **HVAC Equipment & Safety Disclaimer**: Air conditioners contain high-voltage electrical circuits and pressurized refrigerant compressors. Use of this software is at your own risk. The author(s) assume no liability for compressor wear, electrical damage, operational disruption, or voided manufacturer warranties resulting from direct LAN automation or commands dispatched by this software.
