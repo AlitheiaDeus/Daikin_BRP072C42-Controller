@@ -29,6 +29,71 @@ Operates 100% locally over your home Wi-Fi/LAN without external cloud dependenci
 
 ## Architecture & Project Structure
 
+```mermaid
+flowchart TD
+    subgraph Clients["Client Access Layer"]
+        Mobile["Mobile / Tablet (PWA)"]
+        Desktop["Desktop Browser"]
+        Terminal["Interactive CLI (config_helper.py)"]
+    end
+
+    subgraph Host["Controller Host (Server :8080)"]
+        subgraph Frontend["Frontend SPA (web/)"]
+            UI["Dashboard UI & Dial"]
+            TabSwitch["Tab Switcher (0ms + AbortController)"]
+            SyncTimer["Auto-Sync (30s Polling + Visibility API)"]
+            ModalPairing["Non-Sequential Setup Modal"]
+        end
+
+        subgraph Backend["Core Services (server.py & daikin.py)"]
+            HTTP["ThreadingHTTPServer (Pure Python)"]
+            REST["REST API (/api/devices, /api/control)"]
+            DevManager["DeviceManager (daikin_config.json)"]
+            LegacySSL["LegacySSLAdapter (OP_LEGACY_SERVER_CONNECT)"]
+            TieredCache["Tiered Polling (Realtime vs 60s Cache)"]
+            UDPScanner["UDP Discovery (discover.py)"]
+        end
+    end
+
+    subgraph Network["Local LAN / Wi-Fi"]
+        UDPBroadcast["UDP Broadcast (255.255.255.255:30050)"]
+        HTTPSChannel["HTTPS Port 443 (Legacy SSL Renegotiation)"]
+    end
+
+    subgraph Hardware["Daikin Split Units (BRP072C42)"]
+        AC1["Living Room (192.168.1.X)"]
+        AC2["Master Bedroom (192.168.1.Y)"]
+        AC3["Study Room (192.168.1.Z)"]
+    end
+
+    Mobile -->|"HTTP :8080"| HTTP
+    Desktop -->|"HTTP :8080"| HTTP
+    Terminal -->|"Direct Python Call"| DevManager
+    Terminal -->|"Direct UDP Call"| UDPScanner
+
+    HTTP --> UI
+    UI --> TabSwitch
+    UI --> SyncTimer
+    UI --> ModalPairing
+
+    TabSwitch -->|"Abort prior & fetch state"| REST
+    SyncTimer -->|"Poll active AC"| REST
+    ModalPairing -->|"Discover & Pair Keys"| REST
+
+    REST --> DevManager
+    REST -->|"Scan Subnet"| UDPScanner
+    UDPScanner -->|"DAIKIN_UDP/common/basic_info"| UDPBroadcast
+    UDPBroadcast -.->|"Respond with IP, MAC, SSID"| UDPScanner
+
+    DevManager --> TieredCache
+    TieredCache --> LegacySSL
+    LegacySSL -->|"X-Daikin-uuid + 13-digit Key"| HTTPSChannel
+
+    HTTPSChannel -->|"Control & Telemetry"| AC1
+    HTTPSChannel -->|"Control & Telemetry"| AC2
+    HTTPSChannel -->|"Control & Telemetry"| AC3
+```
+
 ```text
 DAIKIN_AC/
 ├── daikin.py                   # Core controller library & CLI tool
