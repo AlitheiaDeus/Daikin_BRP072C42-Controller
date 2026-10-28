@@ -34,6 +34,7 @@ DAIKIN_AC/
 ├── daikin.py                   # Core controller library & CLI tool
 ├── server.py                   # Lightweight HTTP & REST API server
 ├── discover.py                 # UDP broadcast scanner for local Daikin units
+├── config_helper.py            # Interactive non-sequential CLI pairing helper
 ├── daikin_config.example.json  # Configuration template
 ├── daikin_config.json          # Active configuration (Git-ignored)
 └── web/
@@ -54,52 +55,34 @@ DAIKIN_AC/
   pip install requests urllib3
   ```
 
-### 2. Discover Units on Your LAN
+### 2. Pairing & Setup (Zero Manual JSON Editing)
 
-Run the UDP discovery script to find Daikin adapters connected to your local network:
+You can pair and test your units in **any order** without manually editing JSON files:
 
-```bash
-python discover.py
-```
-
-*Example Output:*
-```text
-Broadcasting Daikin UDP probe on port 30050...
-[+] FOUND: IP: 192.168.1.45 | Name: Living Room | SSID: Home-WiFi | MAC: A408EAXXXXXX
-[+] FOUND: IP: 192.168.1.46 | Name: Master Bedroom | SSID: Home-WiFi | MAC: A408EAXXXXXX
-
-Done. Found 2 Daikin unit(s) on your Wi-Fi.
-```
-
-### 3. Configuration
-
-1. Copy the example configuration template:
+#### Option A: Web UI Setup (Recommended)
+1. Launch the server:
    ```bash
-   cp daikin_config.example.json daikin_config.json
+   python server.py
    ```
+2. Open [http://localhost:8080](http://localhost:8080) and click **📡 Units & Keys** in the header.
+3. The dashboard automatically discovers your Daikin units on Wi-Fi.
+4. Type the **13-digit key** from the photo you took of each adapter's barcode sticker into its card in any order and click **Pair & Save**.
+5. The dashboard tests the live handshake immediately and adds the unit to your tab bar.
 
-2. Open `daikin_config.json` and configure your units:
-   ```json
-   {
-     "devices": [
-       {
-         "id": "ac_1",
-         "name": "Master Bedroom",
-         "ip": "192.168.1.45",
-         "key": "YOUR_13_DIGIT_KEY",
-         "uuid": ""
-       },
-       {
-         "id": "ac_2",
-         "name": "Living Room",
-         "ip": "192.168.1.46",
-         "key": "YOUR_13_DIGIT_KEY",
-         "uuid": ""
-       }
-     ]
-   }
-   ```
-   > **Note on Daikin Key**: Newer Daikin firmware adapters require a 13-character registration key (found on the barcode sticker of the Wi-Fi adapter or indoor unit). The `uuid` field can be left blank; a persistent unique identifier will be automatically generated on first handshake.
+#### Option B: Interactive CLI Helper
+Run the terminal configuration helper:
+```bash
+python config_helper.py
+```
+- Automatically scans your Wi-Fi subnet for Daikin BRP072/BRP069 adapters.
+- Select units non-sequentially, customize room names, enter sticker keys, and verify handshakes on the fly.
+
+#### Option C: Manual Configuration
+Alternatively, copy the example file:
+```bash
+cp daikin_config.example.json daikin_config.json
+```
+Edit `daikin_config.json` with your unit IPs and 13-digit sticker keys. (The `uuid` field can be left blank; a client UUID is automatically generated).
 
 ---
 

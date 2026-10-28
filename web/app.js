@@ -142,6 +142,8 @@ async function fetchDevices() {
 
     if (activeDeviceId) {
       switchTab(activeDeviceId);
+    } else {
+      renderUnconfiguredView({ name: "No AC Units Paired", ip: "Scan your Wi-Fi below to get started" });
     }
   } catch (err) {
     setStatus("error", "Server Disconnected");
@@ -417,6 +419,184 @@ btnRefresh.addEventListener("click", () => {
     loadDeviceState(activeDeviceId);
   }
 });
+
+// Discovery & Key Management Modal Elements
+const modalDiscovery = document.getElementById("modal-discovery");
+const btnOpenDiscovery = document.getElementById("btn-open-discovery");
+const btnCloseModal = document.getElementById("btn-close-modal");
+const btnSetupOpenDiscovery = document.getElementById("btn-setup-open-discovery");
+const btnScanNetwork = document.getElementById("btn-scan-network");
+const scanBtnText = document.getElementById("scan-btn-text");
+const scanStatusPill = document.getElementById("scan-status-pill");
+const discoveredCardsContainer = document.getElementById("discovered-cards-container");
+
+function openDiscoveryModal() {
+  if (modalDiscovery) {
+    modalDiscovery.classList.remove("hidden");
+    scanNetwork();
+  }
+}
+
+function closeDiscoveryModal() {
+  if (modalDiscovery) {
+    modalDiscovery.classList.add("hidden");
+  }
+}
+
+if (btnOpenDiscovery) btnOpenDiscovery.addEventListener("click", openDiscoveryModal);
+if (btnCloseModal) btnCloseModal.addEventListener("click", closeDiscoveryModal);
+if (btnSetupOpenDiscovery) btnSetupOpenDiscovery.addEventListener("click", openDiscoveryModal);
+
+if (modalDiscovery) {
+  modalDiscovery.addEventListener("click", (e) => {
+    if (e.target === modalDiscovery) closeDiscoveryModal();
+  });
+}
+
+// Scan local network for Daikin units via UDP
+async function scanNetwork() {
+  if (!discoveredCardsContainer || !btnScanNetwork) return;
+  btnScanNetwork.disabled = true;
+  scanBtnText.textContent = "Scanning Wi-Fi...";
+  scanStatusPill.textContent = "Broadcasting UDP probe...";
+
+  try {
+    const res = await fetch("/api/discover");
+    if (!res.ok) throw new Error("Discovery scan failed");
+    const data = await res.json();
+    renderDiscoveredUnits(data.discovered || []);
+    scanStatusPill.textContent = `Found ${data.discovered ? data.discovered.length : 0} Daikin unit(s)`;
+  } catch (err) {
+    scanStatusPill.textContent = "Scan error: " + err.message;
+    showToast("Discovery error: " + err.message, true);
+  } finally {
+    btnScanNetwork.disabled = false;
+    scanBtnText.textContent = "Scan Wi-Fi Subnet";
+  }
+}
+
+if (btnScanNetwork) {
+  btnScanNetwork.addEventListener("click", scanNetwork);
+}
+
+// Render discovered units non-sequentially
+function renderDiscoveredUnits(units) {
+  if (!discoveredCardsContainer) return;
+  discoveredCardsContainer.innerHTML = "";
+  if (!units || units.length === 0) {
+    discoveredCardsContainer.innerHTML = `
+      <div style="text-align: center; padding: 40px 20px; color: var(--text-muted);">
+        <p>No Daikin units answered the UDP broadcast.</p>
+        <p style="font-size: 0.85rem; margin-top: 8px;">Ensure your device is on the same Wi-Fi subnet as the AC adapters.</p>
+      </div>
+    `;
+    return;
+  }
+
+  units.forEach((u, idx) => {
+    const card = document.createElement("div");
+    card.className = `unit-card ${u.configured ? "is-paired" : "is-unpaired"}`;
+    card.id = `discovered-card-${idx}`;
+
+    const defaultName = u.configured_name || u.detected_name || `AC ${idx + 1}`;
+    const badgeHtml = u.configured 
+      ? `<span class="unit-badge badge-paired">● Paired & Configured</span>`
+      : `<span class="unit-badge badge-needs-key">🔑 Needs 13-digit Key</span>`;
+
+    card.innerHTML = `
+      <div class="unit-card-header">
+        <div class="unit-title-row">
+          <input type="text" class="unit-name-input" id="name-${idx}" value="${defaultName}" placeholder="Room Name (e.g. Living Room)" />
+          ${badgeHtml}
+        </div>
+      </div>
+
+      <div class="unit-meta-pills">
+        <span class="meta-pill">IP: ${u.ip}</span>
+        ${u.mac ? `<span class="meta-pill">MAC: ${u.mac}</span>` : ""}
+        ${u.ssid ? `<span class="meta-pill">SSID: ${u.ssid}</span>` : ""}
+      </div>
+
+      <div class="unit-key-row">
+        <div class="key-input-wrapper">
+          <input 
+            type="text" 
+            class="key-input" 
+            id="key-${idx}" 
+            placeholder="${u.has_key ? '●●●●●●●●●●●●● (Key Saved - Enter new to change)' : 'Enter 13-digit key from sticker photo'}" 
+            maxlength="13" 
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <button class="btn-primary btn-pair" id="btn-save-${idx}">
+          <span>Pair & Save</span>
+        </button>
+      </div>
+
+      <div class="key-feedback" id="feedback-${idx}"></div>
+    `;
+
+    const saveBtn = card.querySelector(`#btn-save-${idx}`);
+    const nameInput = card.querySelector(`#name-${idx}`);
+    const keyInput = card.querySelector(`#key-${idx}`);
+    const feedback = card.querySelector(`#feedback-${idx}`);
+
+    saveBtn.addEventListener("click", async () => {
+      const roomName = nameInput.value.trim() || defaultName;
+      const keyVal = keyInput.value.trim();
+
+      if (!keyVal && !u.has_key) {
+        feedback.className = "key-feedback error";
+        feedback.textContent = "Please enter the 13-digit key from your photo!";
+        return;
+      }
+
+      saveBtn.disabled = true;
+      feedback.className = "key-feedback busy";
+      feedback.textContent = "Connecting to AC & testing handshake...";
+
+      try {
+        const payload = {
+          id: u.configured_id || undefined,
+          name: roomName,
+          ip: u.ip,
+          key: keyVal || undefined
+        };
+
+        const res = await fetch("/api/devices/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+
+        const resp = await res.json();
+        if (!res.ok || resp.error) throw new Error(resp.error || "Save failed");
+
+        if (resp.handshake_ok) {
+          card.className = "unit-card is-paired";
+          feedback.className = "key-feedback success";
+          feedback.textContent = `✅ Handshake verified! (Status: ${resp.device.status}, Temp: ${resp.device.indoor_temp || 25}°C)`;
+          showToast(`Saved & paired ${roomName}`);
+        } else {
+          feedback.className = "key-feedback error";
+          feedback.textContent = "⚠️ Saved, but AC rejected the key (Check sticker key in photo)";
+          showToast(`Handshake failed for ${roomName}`, true);
+        }
+
+        // Refresh main dashboard tabs dynamically
+        await fetchDevices();
+      } catch (err) {
+        feedback.className = "key-feedback error";
+        feedback.textContent = "Error: " + err.message;
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+
+    discoveredCardsContainer.appendChild(card);
+  });
+}
 
 // Auto-refresh active AC when tab is restored from background
 document.addEventListener("visibilitychange", () => {

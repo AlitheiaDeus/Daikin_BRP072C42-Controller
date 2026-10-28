@@ -75,9 +75,7 @@ class DaikinController:
         try:
             res = self.session.get(url, params=params, verify=False, timeout=6)
             parsed = self._parse_response(res.text)
-            if parsed.get("ret") == "OK" or res.status_code == 200:
-                return True
-            return False
+            return parsed.get("ret") == "OK"
         except Exception as exc:
             print(f"[{self.name}] Registration error: {exc}")
             return False
@@ -278,6 +276,43 @@ class DaikinDeviceManager:
 
     def get_device(self, dev_id: str) -> Optional[DaikinController]:
         return self.devices.get(dev_id)
+
+    def upsert_device(self, dev_id: str, name: str, ip: str, key: str, client_uuid: str = "") -> "DaikinController":
+        if not dev_id:
+            dev_id = f"ac_{len(self.devices) + 1}"
+
+        existing = self.devices.get(dev_id)
+        if existing:
+            if name:
+                existing.name = name
+            if ip:
+                existing.ip = ip
+                existing.base_url = f"https://{existing.ip}"
+            if key:
+                existing.key = key.strip()
+            if client_uuid:
+                existing.uuid = client_uuid
+                existing.session.headers.update({"X-Daikin-uuid": existing.uuid})
+            ctrl = existing
+        else:
+            ctrl = DaikinController(
+                device_id=dev_id,
+                name=name or dev_id,
+                ip=ip,
+                key=key.strip() if key else "",
+                client_uuid=client_uuid or uuid.uuid4().hex
+            )
+            self.devices[dev_id] = ctrl
+
+        self.save_config()
+        return ctrl
+
+    def delete_device(self, dev_id: str) -> bool:
+        if dev_id in self.devices:
+            del self.devices[dev_id]
+            self.save_config()
+            return True
+        return False
 
     def get_summaries(self) -> List[dict]:
         return [

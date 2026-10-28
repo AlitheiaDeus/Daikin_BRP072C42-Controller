@@ -5,6 +5,7 @@ import mimetypes
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from daikin import DaikinDeviceManager
+from discover import discover_units
 
 PORT = 8080
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
@@ -47,6 +48,28 @@ class DaikinWebHandler(BaseHTTPRequestHandler):
         # API: List all devices (lightweight instant summary, zero AC network traffic)
         if path == "/api/devices":
             return self._send_json({"devices": manager.get_summaries()})
+
+        # API: Discover Daikin units on the local subnet via UDP
+        if path == "/api/discover":
+            raw_discovered = discover_units(timeout=2.0)
+            results = []
+            for u in raw_discovered:
+                matched = None
+                for ctrl in manager.devices.values():
+                    if ctrl.ip == u["ip"]:
+                        matched = ctrl
+                        break
+                results.append({
+                    "ip": u["ip"],
+                    "detected_name": u["name"],
+                    "ssid": u["ssid"],
+                    "mac": u["mac"],
+                    "configured": bool(matched and matched.is_configured),
+                    "configured_id": matched.device_id if matched else None,
+                    "configured_name": matched.name if matched else u["name"],
+                    "has_key": bool(matched and matched.key),
+                })
+            return self._send_json({"discovered": results})
 
         # API: Get single device status
         if path.startswith("/api/devices/"):
@@ -135,6 +158,62 @@ class DaikinWebHandler(BaseHTTPRequestHandler):
                     return self._send_json(updated_state)
                 except Exception as e:
                     return self._send_json({"error": str(e)}, 500)
+
+        # API: Save/pair a Daikin unit key & configuration
+        if path == "/api/devices/save":
+            content_len = int(self.headers.get("Content-Length", 0))
+            post_body = self.rfile.read(content_len).decode("utf-8")
+            try:
+                payload = json.loads(post_body) if post_body else {}
+                dev_id = payload.get("id")
+                name = payload.get("name", "").strip()
+                ip = payload.get("ip", "").strip()
+                key = payload.get("key", "").strip()
+
+                if not ip:
+                    return self._send_json({"error": "IP address is required"}, 400)
+
+                # Match existing unit by IP if dev_id not specified
+                if not dev_id:
+                    for ctrl in manager.devices.values():
+                        if ctrl.ip == ip:
+                            dev_id = ctrl.device_id
+                            break
+
+                ctrl = manager.upsert_device(dev_id=dev_id, name=name, ip=ip, key=key)
+                # Attempt live handshake registration
+                reg_ok = ctrl.register()
+                state = ctrl.get_full_state()
+                return self._send_json({
+                    "success": True,
+                    "handshake_ok": reg_ok,
+                    "device": {
+                        "id": ctrl.device_id,
+                        "name": ctrl.name,
+                        "ip": ctrl.ip,
+                        "configured": ctrl.is_configured,
+                        "status": state.get("status", "unknown"),
+                        "power": state.get("power", False),
+                        "indoor_temp": state.get("indoor_temp"),
+                        "target_temp": state.get("target_temp")
+                    }
+                })
+            except Exception as e:
+                return self._send_json({"error": str(e)}, 500)
+
+        # API: Remove a device slot
+        if path == "/api/devices/delete":
+            content_len = int(self.headers.get("Content-Length", 0))
+            post_body = self.rfile.read(content_len).decode("utf-8")
+            try:
+                payload = json.loads(post_body) if post_body else {}
+                dev_id = payload.get("id")
+                if not dev_id:
+                    return self._send_json({"error": "Device ID is required"}, 400)
+                ok = manager.delete_device(dev_id)
+                return self._send_json({"success": ok})
+            except Exception as e:
+                return self._send_json({"error": str(e)}, 500)
 
         self.send_error(404, "Endpoint not found")
 

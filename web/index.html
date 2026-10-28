@@ -43,6 +43,10 @@
           <span class="status-pulse"></span>
           <span class="status-text" id="status-text">Connected</span>
         </div>
+        <button id="btn-open-discovery" class="pill-btn" title="Discover & Configure Units">
+          <span class="btn-icon">📡</span>
+          <span>Units & Keys</span>
+        </button>
         <button id="btn-refresh" class="icon-button" title="Refresh Telemetry">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
@@ -275,6 +279,10 @@
                 <strong>Paste & Save:</strong> Edit <code>daikin_config.json</code>. The server will auto-register it!
               </div>
             </div>
+          <div class="setup-actions">
+            <button id="btn-setup-open-discovery" class="btn-primary">
+              <span>📡 Open Units & Key Helper</span>
+            </button>
           </div>
         </div>
       </div>
@@ -283,6 +291,32 @@
     <!-- Floating Action Toast -->
     <div id="toast" class="toast">
       <span id="toast-message">Command sent</span>
+    </div>
+  </div>
+
+  <!-- Discovery & Key Management Modal -->
+  <div id="modal-discovery" class="modal-overlay hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="modal-badge">LAN DISCOVERY & SETUP</span>
+          <h2>Daikin AC Units</h2>
+          <p class="modal-subtitle">Discovered units on your Wi-Fi. Enter 13-digit sticker keys in any order to pair.</p>
+        </div>
+        <button id="btn-close-modal" class="icon-button modal-close" title="Close">✕</button>
+      </div>
+
+      <div class="modal-actions-bar">
+        <button id="btn-scan-network" class="btn-primary">
+          <span class="scan-icon">📡</span>
+          <span id="scan-btn-text">Scan Wi-Fi Subnet</span>
+        </button>
+        <span id="scan-status-pill" class="scan-status-text">Ready to scan</span>
+      </div>
+
+      <div id="discovered-cards-container" class="discovered-grid">
+        <!-- Rendered dynamically by JS -->
+      </div>
     </div>
   </div>
 
