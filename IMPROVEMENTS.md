@@ -94,12 +94,13 @@ Currently, a single setting change (e.g., clicking **Temp +0.5** or **Power**) t
 
 ## 4. Implementation Priority Checklist
 
-| Priority | Item | Component | Complexity |
-| :---: | :--- | :--- | :---: |
-| 🔴 **P0** | Collapse command flow to 1 HTTP write call | `daikin.py` | Low |
-| 🔴 **P0** | Synthetic state return on control POST | `server.py` | Low |
-| 🔴 **P0** | Optimistic UI updates + temp debouncing | `web/app.js` | Medium |
-| 🟡 **P1** | Background poller for zero-delay tab switching | `server.py` | Medium |
+| Priority | Item | Component | Complexity | Status |
+| :---: | :--- | :--- | :---: | :---: |
+| 🔴 **P0** | Collapse command flow to 1 HTTP write call | `daikin.py` | Low | ✅ Completed |
+| 🔴 **P0** | Synthetic state return on control POST | `server.py` | Low | ✅ Completed |
+| 🔴 **P0** | Optimistic UI updates + temp debouncing | `web/app.js` | Medium | ✅ Completed |
+| 🟡 **P1** | Background poller for zero-delay tab switching | `server.py` | Medium | ✅ Completed |
+| 🟡 **P1** | Hardware capability autodetection (`/aircon/get_model_info`) | `daikin.py` & `web/` | Low | ✅ Completed |
 | 🟡 **P1** | Global "All Off" quick control | `server.py` & `web/` | Low |
 | 🟢 **P2** | Smart sleep temperature curves | `server.py` | Medium |
 | 🟢 **P2** | Estimated power / energy telemetry | `daikin.py` & `web/` | Medium |

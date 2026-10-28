@@ -4,6 +4,12 @@ let activeDeviceId = null;
 let activeDeviceState = null;
 let isUpdating = false;
 
+// Optimistic UI & Debounced Command Queue
+let pendingPatch = {};
+let debounceTimer = null;
+let inFlightRequest = false;
+let lastConfirmedState = null;
+
 // Request tracking to prevent out-of-order race conditions
 let activeRequestId = 0;
 let abortController = null;
@@ -60,11 +66,14 @@ function setStatus(type, message) {
 }
 
 // Show Toast
+let toastTimeout = null;
 function showToast(message, isError = false) {
   toastMsg.textContent = message;
   toast.style.borderLeftColor = isError ? "var(--accent-danger)" : "var(--accent-cyan)";
   toast.classList.add("show");
-  setTimeout(() => toast.classList.remove("show"), 3200);
+  if (toastTimeout) clearTimeout(toastTimeout);
+  const duration = isError ? 6500 : 3200;
+  toastTimeout = setTimeout(() => toast.classList.remove("show"), duration);
 }
 
 // Stop Countdown
@@ -84,7 +93,7 @@ function startCountdown() {
   }
 
   countdownTimer = setInterval(() => {
-    if (document.hidden || isBusy || isUpdating) return;
+    if (document.hidden || isBusy || isUpdating || inFlightRequest || debounceTimer || Object.keys(pendingPatch).length > 0) return;
     syncCountdown--;
     if (syncCountdown <= 0) {
       syncCountdown = SYNC_INTERVAL_SEC;
@@ -161,7 +170,14 @@ function renderTabs() {
     tab.className = `device-tab ${d.id === activeDeviceId ? "active" : ""}`;
     tab.id = `tab-${d.id}`;
 
-    let badgeText = d.configured ? "Ready" : "Setup";
+    let badgeText = "Setup";
+    if (d.configured) {
+      if (d.power !== undefined) {
+        badgeText = d.power ? `${d.target_temp || 24}°C` : "OFF";
+      } else {
+        badgeText = "Ready";
+      }
+    }
     tab.innerHTML = `
       <span>${d.name || d.id}</span>
       <span class="tab-badge">${badgeText}</span>
@@ -177,8 +193,14 @@ function renderTabs() {
   });
 }
 
-// Instant Tab Switcher (0ms feedback + aborts in-flight requests)
+// Instant Tab Switcher (0ms feedback from server RAM cache)
 function switchTab(newDeviceId) {
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+    debounceTimer = null;
+    flushPendingPatch();
+  }
+  pendingPatch = {};
   stopCountdown();
   activeDeviceId = newDeviceId;
 
@@ -196,19 +218,16 @@ function switchTab(newDeviceId) {
     return;
   }
 
-  // 3. Immediately blank stats and show "Syncing..."
+  // 3. Switch view panel and load from server RAM cache silently (<2ms)
   activeDeviceView.classList.remove("hidden");
   unconfiguredView.classList.add("hidden");
-  blankActiveFields(devMeta);
-  isBusy = true;
-  setStatus("busy", "Syncing with AC...");
 
-  // 4. Fetch real live state on-demand
-  loadDeviceState(newDeviceId);
+  // 4. Fetch state from RAM cache immediately
+  loadDeviceState(newDeviceId, true);
 }
 
 // Load single device state on-demand with cancellation of older requests
-async function loadDeviceState(id, isBackground = false) {
+async function loadDeviceState(id, isBackground = false, forceRefresh = false) {
   // Abort any previous pending request so late responses never spasm the UI
   if (abortController) {
     abortController.abort();
@@ -216,13 +235,14 @@ async function loadDeviceState(id, isBackground = false) {
   abortController = new AbortController();
   const currentRequestId = ++activeRequestId;
 
-  isBusy = true;
   if (!isBackground) {
+    isBusy = true;
     setStatus("busy", "Syncing with AC...");
   }
 
   try {
-    const res = await fetch(`/api/devices/${id}`, { signal: abortController.signal });
+    const url = forceRefresh ? `/api/devices/${id}?refresh=1` : `/api/devices/${id}`;
+    const res = await fetch(url, { signal: abortController.signal });
     if (!res.ok) throw new Error("HTTP connection error");
     const state = await res.json();
 
@@ -284,6 +304,9 @@ function renderActiveView(state) {
     statError.className = "stat-value stat-error";
     return;
   }
+
+  lastConfirmedState = JSON.parse(JSON.stringify(state));
+
   if (state.power) {
     btnPower.classList.add("is-on");
     labelModeSummary.textContent = `${(state.mode || "COOL").toUpperCase()} ACTIVE`;
@@ -295,12 +318,20 @@ function renderActiveView(state) {
   }
 
   // Target Temp
-  valTargetTemp.textContent = (state.target_temp !== undefined && state.target_temp !== null) 
-    ? Number(state.target_temp).toFixed(1) 
-    : "24.0";
+  if (state.target_temp !== undefined && state.target_temp !== null) {
+    const num = Number(state.target_temp);
+    valTargetTemp.textContent = !isNaN(num) ? num.toFixed(1) : String(state.target_temp);
+  } else {
+    valTargetTemp.textContent = "24.0";
+  }
 
-  // Mode chips
+  // Mode chips (Dynamically filtered by autodetected hardware capabilities)
+  const supportedModes = Array.isArray(state.supported_modes) && state.supported_modes.length > 0
+    ? state.supported_modes
+    : ["cool", "dry", "fan", "auto", "heat"];
   document.querySelectorAll("#mode-selector .chip-btn").forEach(btn => {
+    const isSupported = supportedModes.includes(btn.dataset.mode);
+    btn.style.display = isSupported ? "" : "none";
     btn.classList.toggle("active", btn.dataset.mode === state.mode);
   });
 
@@ -309,7 +340,11 @@ function renderActiveView(state) {
     btn.classList.toggle("active", btn.dataset.fan === state.fan_rate);
   });
 
-  // Swing chips
+  // Swing chips (Hide entire vane section if hardware does not support swing)
+  const swingSection = document.getElementById("swing-selector")?.closest(".control-section");
+  if (swingSection) {
+    swingSection.style.display = state.supports_swing === false ? "none" : "";
+  }
   document.querySelectorAll("#swing-selector .chip-btn").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.swing === String(state.fan_dir));
   });
@@ -341,82 +376,211 @@ function renderActiveView(state) {
   }
 }
 
-// Send Control Command
-async function sendCommand(patch) {
-  if (!activeDeviceId || isUpdating) return;
-  isUpdating = true;
-  setStatus("busy", "Sending command...");
+// Optimistic UI Updaters (0ms instant visual feedback)
+function applyOptimisticPower(power) {
+  btnPower.classList.toggle("is-on", power);
+  dialGlow.style.opacity = power ? "0.7" : "0.15";
+  const activeMode = (pendingPatch.mode || (activeDeviceState && activeDeviceState.mode) || "COOL").toUpperCase();
+  labelModeSummary.textContent = power ? `${activeMode} ACTIVE` : "UNIT STANDBY / OFF";
+
+  if (activeDeviceId) {
+    const activeTab = document.getElementById(`tab-${activeDeviceId}`);
+    if (activeTab) {
+      const badge = activeTab.querySelector(".tab-badge");
+      if (badge) {
+        const curTemp = pendingPatch.target_temp !== undefined ? pendingPatch.target_temp : (activeDeviceState?.target_temp || 24);
+        badge.textContent = power ? `${Number(curTemp).toFixed(1)}°C` : "OFF";
+      }
+    }
+  }
+}
+
+function applyOptimisticTemp(temp) {
+  valTargetTemp.textContent = Number(temp).toFixed(1);
+  if (activeDeviceId) {
+    const activeTab = document.getElementById(`tab-${activeDeviceId}`);
+    if (activeTab) {
+      const badge = activeTab.querySelector(".tab-badge");
+      const isPowerOn = pendingPatch.power !== undefined ? pendingPatch.power : (activeDeviceState?.power);
+      if (badge && isPowerOn) {
+        badge.textContent = `${Number(temp).toFixed(1)}°C`;
+      }
+    }
+  }
+}
+
+function applyOptimisticMode(mode) {
+  document.querySelectorAll("#mode-selector .chip-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.mode === mode);
+  });
+  const isPowerOn = pendingPatch.power !== undefined ? pendingPatch.power : (activeDeviceState?.power);
+  if (isPowerOn) {
+    labelModeSummary.textContent = `${mode.toUpperCase()} ACTIVE`;
+  }
+}
+
+function applyOptimisticFan(fan) {
+  document.querySelectorAll("#fan-selector .chip-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.fan === fan);
+  });
+}
+
+function applyOptimisticSwing(swing) {
+  document.querySelectorAll("#swing-selector .chip-btn").forEach(btn => {
+    btn.classList.toggle("active", btn.dataset.swing === String(swing));
+  });
+}
+
+// Queue & Debounce Control Commands
+function queuePatch(patch, debounceMs = 350) {
+  if (!activeDeviceId) return;
+
+  Object.assign(pendingPatch, patch);
+  stopCountdown();
+  setStatus("busy", "Updating...");
+
+  if (debounceTimer) {
+    clearTimeout(debounceTimer);
+  }
+
+  debounceTimer = setTimeout(() => {
+    debounceTimer = null;
+    flushPendingPatch();
+  }, debounceMs);
+}
+
+// Flush Accumulated Patch to Server
+async function flushPendingPatch() {
+  if (!activeDeviceId) return;
+  if (inFlightRequest) return;
+
+  const keys = Object.keys(pendingPatch);
+  if (keys.length === 0) {
+    startCountdown();
+    return;
+  }
+
+  const patchToSend = { ...pendingPatch };
+  pendingPatch = {};
+  inFlightRequest = true;
+  setStatus("busy", "Applying to AC...");
 
   try {
     const res = await fetch(`/api/devices/${activeDeviceId}/control`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(patch)
+      body: JSON.stringify(patchToSend)
     });
     const updated = await res.json();
     if (updated.error) throw new Error(updated.error);
-    
+
     activeDeviceState = updated;
-    renderActiveView(updated);
-    showToast("Command applied to AC");
-    startCountdown();
+    lastConfirmedState = JSON.parse(JSON.stringify(updated));
+
+    // If no newer changes were queued while network call was in flight
+    if (Object.keys(pendingPatch).length === 0) {
+      renderActiveView(updated);
+      showToast("Command applied to AC");
+      startCountdown();
+    } else {
+      // User tapped while previous request was in flight; flush next batch immediately
+      flushPendingPatch();
+    }
   } catch (err) {
+    console.error(`[Command Error on ${activeDeviceId}]:`, err);
     showToast(`Error: ${err.message}`, true);
     setStatus("error", "Command failed");
+    if (lastConfirmedState) {
+      activeDeviceState = JSON.parse(JSON.stringify(lastConfirmedState));
+      renderActiveView(lastConfirmedState);
+    }
+    pendingPatch = {};
+    startCountdown();
   } finally {
-    isUpdating = false;
+    inFlightRequest = false;
   }
 }
 
-// Event Listeners
+// Event Listeners with 0ms Optimistic Feedback & Debouncing
 document.getElementById("btn-power").addEventListener("click", () => {
   if (!activeDeviceState) return;
-  const newPower = !activeDeviceState.power;
-  sendCommand({ power: newPower });
+  const currentPower = pendingPatch.power !== undefined ? pendingPatch.power : !!activeDeviceState.power;
+  const nextPower = !currentPower;
+  applyOptimisticPower(nextPower);
+  queuePatch({ power: nextPower }, 250);
 });
 
 document.getElementById("btn-temp-up").addEventListener("click", () => {
   if (!activeDeviceState) return;
-  const curr = parseFloat(valTargetTemp.textContent) || 24.0;
-  if (curr < 32.0) {
-    sendCommand({ target_temp: curr + 0.5 });
+  const activeMode = pendingPatch.mode || activeDeviceState.mode;
+  if (activeMode === "fan" || activeMode === "dry") {
+    showToast(`Temperature is not adjustable in ${activeMode.toUpperCase()} mode`);
+    return;
+  }
+  const maxTemp = (activeDeviceState && activeDeviceState.max_temp !== undefined) ? Number(activeDeviceState.max_temp) : 32.0;
+  const currentTemp = pendingPatch.target_temp !== undefined
+    ? pendingPatch.target_temp
+    : (parseFloat(valTargetTemp.textContent) || 24.0);
+  if (currentTemp < maxTemp) {
+    const nextTemp = Math.min(maxTemp, Math.round((currentTemp + 0.5) * 10) / 10);
+    applyOptimisticTemp(nextTemp);
+    queuePatch({ target_temp: nextTemp }, 350);
   }
 });
 
 document.getElementById("btn-temp-down").addEventListener("click", () => {
   if (!activeDeviceState) return;
-  const curr = parseFloat(valTargetTemp.textContent) || 24.0;
-  if (curr > 18.0) {
-    sendCommand({ target_temp: curr - 0.5 });
+  const activeMode = pendingPatch.mode || activeDeviceState.mode;
+  if (activeMode === "fan" || activeMode === "dry") {
+    showToast(`Temperature is not adjustable in ${activeMode.toUpperCase()} mode`);
+    return;
+  }
+  const minTemp = (activeDeviceState && activeDeviceState.min_temp !== undefined) ? Number(activeDeviceState.min_temp) : 18.0;
+  const currentTemp = pendingPatch.target_temp !== undefined
+    ? pendingPatch.target_temp
+    : (parseFloat(valTargetTemp.textContent) || 24.0);
+  if (currentTemp > minTemp) {
+    const nextTemp = Math.max(minTemp, Math.round((currentTemp - 0.5) * 10) / 10);
+    applyOptimisticTemp(nextTemp);
+    queuePatch({ target_temp: nextTemp }, 350);
   }
 });
 
 // Mode buttons
 document.querySelectorAll("#mode-selector .chip-btn").forEach(btn => {
   btn.addEventListener("click", () => {
-    sendCommand({ mode: btn.dataset.mode });
+    if (!activeDeviceState) return;
+    const nextMode = btn.dataset.mode;
+    applyOptimisticMode(nextMode);
+    queuePatch({ mode: nextMode }, 250);
   });
 });
 
 // Fan buttons
 document.querySelectorAll("#fan-selector .chip-btn").forEach(btn => {
   btn.addEventListener("click", () => {
-    sendCommand({ fan_rate: btn.dataset.fan });
+    if (!activeDeviceState) return;
+    const nextFan = btn.dataset.fan;
+    applyOptimisticFan(nextFan);
+    queuePatch({ fan_rate: nextFan }, 250);
   });
 });
 
 // Swing buttons
 document.querySelectorAll("#swing-selector .chip-btn").forEach(btn => {
   btn.addEventListener("click", () => {
-    sendCommand({ fan_dir: btn.dataset.swing });
+    if (!activeDeviceState) return;
+    const nextSwing = btn.dataset.swing;
+    applyOptimisticSwing(nextSwing);
+    queuePatch({ fan_dir: nextSwing }, 250);
   });
 });
 
-// Refresh button (refreshes active unit on-demand)
+// Refresh button (forces live telemetry read from AC hardware)
 btnRefresh.addEventListener("click", () => {
   if (activeDeviceId) {
-    showToast("Refreshing active unit...");
-    loadDeviceState(activeDeviceId);
+    showToast("Refreshing live from AC...");
+    loadDeviceState(activeDeviceId, false, true);
   }
 });
 

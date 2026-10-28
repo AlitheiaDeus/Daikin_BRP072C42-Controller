@@ -1,6 +1,8 @@
 import json
 import os
 import sys
+import threading
+import time
 import mimetypes
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
@@ -86,11 +88,17 @@ class DaikinWebHandler(BaseHTTPRequestHandler):
                         "basic_info": device.query_endpoint("/common/basic_info"),
                         "sensor_info": device.query_endpoint("/aircon/get_sensor_info"),
                         "control_info": device.query_endpoint("/aircon/get_control_info"),
+                        "model_info": device.query_endpoint("/aircon/get_model_info"),
                         "week_power": device.query_endpoint("/aircon/get_week_power")
                     }
                     return self._send_json(telemetry)
                 
+                force_refresh = parse_qs(parsed.query).get("refresh", ["0"])[0] in ("1", "true")
                 try:
+                    if not force_refresh:
+                        cached = device.get_cached_state()
+                        if cached:
+                            return self._send_json(cached)
                     return self._send_json(device.get_full_state())
                 except Exception as e:
                     return self._send_json({
@@ -152,11 +160,28 @@ class DaikinWebHandler(BaseHTTPRequestHandler):
                 try:
                     payload = json.loads(post_body) if post_body else {}
                     res = device.update_settings(**payload)
-                    # Return fresh updated state
+                    # Return synthetic updated state directly (0 extra HTTP roundtrips)
+                    if isinstance(res, dict) and "id" in res and "power" in res:
+                        return self._send_json(res)
+
+                    # If Daikin controller returned an error or rejected the command
+                    if isinstance(res, dict) and res.get("ret") != "OK":
+                        err_code = res.get("ret", "REJECTED")
+                        err_msg = res.get("error") or f"Hardware code {err_code} (Mode or parameter not supported)"
+                        print(f"[CTRL ERROR] {device.name or dev_id}: {err_code} - {err_msg}")
+                        return self._send_json({
+                            "error": f"Daikin command failed: {err_msg}",
+                            "daikin_res": res
+                        }, 400)
+
+                    # Fallback if device state was uninitialized
                     updated_state = device.get_full_state()
                     updated_state["daikin_res"] = res
                     return self._send_json(updated_state)
                 except Exception as e:
+                    import traceback
+                    print(f"\n[HTTP 500 ERROR] Control failure on {dev_id}: {e}")
+                    traceback.print_exc()
                     return self._send_json({"error": str(e)}, 500)
 
         # API: Save/pair a Daikin unit key & configuration
@@ -222,10 +247,38 @@ class DaikinWebHandler(BaseHTTPRequestHandler):
         print(f"[HTTP] {self.address_string()} - {format % args}")
 
 
+class DaikinBackgroundPoller(threading.Thread):
+    """Background worker that queries all online Daikin AC units in parallel."""
+    def __init__(self, dev_manager: DaikinDeviceManager, interval: float = 15.0):
+        super().__init__(daemon=True, name="DaikinBackgroundPoller")
+        self.manager = dev_manager
+        self.interval = interval
+        self.running = True
+
+    def run(self):
+        # Initial parallel poll 0.5s after boot
+        time.sleep(0.5)
+        while self.running:
+            t0 = time.time()
+            try:
+                self.manager.poll_all_parallel()
+            except Exception as exc:
+                print(f"[Poller] Background cycle error: {exc}")
+            elapsed = time.time() - t0
+            sleep_time = max(1.0, self.interval - elapsed)
+            time.sleep(sleep_time)
+
+    def stop(self):
+        self.running = False
+
+
 def run():
+    poller = DaikinBackgroundPoller(manager, interval=15.0)
+    poller.start()
     server = ThreadingHTTPServer(("0.0.0.0", PORT), DaikinWebHandler)
     print(f"\n=======================================================")
     print(f"[*] Daikin Multi-Unit Web Controller is LIVE!")
+    print(f"[*] Parallel Background Poller: ACTIVE (15s Heartbeat)")
     print(f"[*] Local Access:   http://localhost:{PORT}")
     print(f"[*] LAN / Phone:    http://<PC-LAN-IP>:{PORT}")
     print(f"[*] Press Ctrl+C to stop.")
@@ -234,6 +287,7 @@ def run():
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nStopping server.")
+        poller.stop()
         server.server_close()
 
 
