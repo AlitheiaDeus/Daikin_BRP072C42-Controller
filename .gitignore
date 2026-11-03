@@ -13,3 +13,7 @@ scratch/
 # Environment / OS files
 .DS_Store
 Thumbs.db
+
+# MicroPython secrets
+micropython/daikin_config.json
+*wifi_config*.json
