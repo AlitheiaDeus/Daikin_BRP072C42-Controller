@@ -293,24 +293,27 @@ async def handle_client(reader, writer):
 
 
 async def background_poller():
-    """Background task continuously polling all Daikin AC units every 15s into RAM cache."""
-    import time
-    # Polling starts immediately on boot so cache is warm right away
-    while True:
-        t0 = time.time()
-        for ctrl in list(manager.devices.values()):
-            if ctrl.is_configured:
-                try:
-                    ctrl.get_full_state()
-                except Exception as exc:
-                    print(f"[{ctrl.name}] Poll error: {exc}")
-                # Yield to uasyncio between units so incoming web requests are served in <5ms
-                await asyncio.sleep_ms(50)
-                gc.collect()
+    """Background task polling all Daikin AC units staggered across 16s to keep web server ultra responsive."""
+    # On initial boot, pause 2 seconds to let web server serve the first user page immediately without contention
+    await asyncio.sleep(2)
 
-        elapsed = time.time() - t0
-        sleep_time = max(1.0, 15.0 - elapsed)
-        await asyncio.sleep(sleep_time)
+    while True:
+        configured_devs = [c for c in manager.devices.values() if c.is_configured]
+        if not configured_devs:
+            await asyncio.sleep(5)
+            continue
+
+        # Stagger polls evenly across ~16 seconds (e.g. 4 units -> ~4s interval per unit)
+        interval = max(2.5, 16.0 / len(configured_devs))
+
+        for ctrl in configured_devs:
+            try:
+                ctrl.get_full_state()
+            except Exception as exc:
+                print(f"[{ctrl.name}] Poll error: {exc}")
+            gc.collect()
+            # Give the asyncio loop a generous multi-second window to serve web requests in <5ms
+            await asyncio.sleep(interval)
 
 
 async def main():

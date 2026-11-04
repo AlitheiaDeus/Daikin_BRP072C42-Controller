@@ -219,7 +219,7 @@ class DaikinController:
         headers = {"X-Daikin-uuid": self.uuid}
         try:
             status, body = daikin_http_request(
-                self.ip, path, headers=headers, port=self.port, use_ssl=self.use_ssl, timeout=4.5
+                self.ip, path, headers=headers, port=self.port, use_ssl=self.use_ssl, timeout=2.0
             )
             return status, self._parse_response(body)
         except Exception as e:
@@ -227,7 +227,7 @@ class DaikinController:
             if self.use_ssl and not self._last_state:
                 try:
                     status, body = daikin_http_request(
-                        self.ip, path, headers=headers, port=80, use_ssl=False, timeout=3.0
+                        self.ip, path, headers=headers, port=80, use_ssl=False, timeout=2.0
                     )
                     self.use_ssl = False
                     self.port = 80
