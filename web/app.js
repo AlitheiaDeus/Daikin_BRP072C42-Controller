@@ -139,7 +139,7 @@ function attachTouchSafeClick(el, handler) {
 
 // Set Status Badge with State & Message
 function setStatus(type, message) {
-  statusText.textContent = message;
+  if (statusText) statusText.textContent = message;
   if (statusPulse) {
     statusPulse.className = "status-pulse";
     if (type === "busy") statusPulse.classList.add("status-busy");
@@ -1270,10 +1270,12 @@ if (diagnosticsDrawer) {
 }
 
 // Refresh button (fetches latest interval data from XIAO hub RAM cache)
-btnRefresh.addEventListener("click", () => {
-  showToast("Updating from hub cache...");
-  fetchDevices(false);
-});
+if (btnRefresh) {
+  btnRefresh.addEventListener("click", () => {
+    showToast("Updating from hub cache...");
+    fetchDevices(false);
+  });
+}
 
 // Discovery & Key Management Modal Elements
 const modalDiscovery = document.getElementById("modal-discovery");
