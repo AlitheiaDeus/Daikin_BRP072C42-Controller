@@ -22,9 +22,8 @@ try {
 
 let isUpdating = false;
 
-// View Mode: "overview" (all units at a glance) or "detail" (single unit controls)
-const isMobileUser = window.innerWidth <= 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-let currentView = isMobileUser ? "overview" : (localStorage.getItem("daikin_view_pref") || "overview");
+// View Mode: Landing page defaults to "overview"
+let currentView = localStorage.getItem("daikin_view_pref") || "overview";
 
 // Optimistic UI & Debounced Command Queue for Single Unit View
 let pendingPatch = {};
@@ -32,9 +31,12 @@ let debounceTimer = null;
 let inFlightRequest = false;
 let lastConfirmedState = null;
 
-// Per-Device Timers & Patches for Overview Cards
-const deviceTimers = {};
-const devicePending = {};
+// Pooled temperature & power control state (Shared by overview tiles & detail view)
+const devicePendingTemp = {};
+const deviceDebounceTimers = {};
+const deviceInFlight = {};
+const deviceNeedsFlush = {};
+const devicePowerInFlight = {};
 
 // Request tracking to prevent out-of-order race conditions
 let activeRequestId = 0;
@@ -99,6 +101,41 @@ const setupIdPreview = document.getElementById("setup-id-preview");
 const setupNamePreview = document.getElementById("setup-name-preview");
 
 let isBusy = false;
+
+// Touch-safe click handler to prevent mobile scroll gestures (>8px) from triggering accidental taps
+function attachTouchSafeClick(el, handler) {
+  if (!el) return;
+  let startX = 0;
+  let startY = 0;
+  let isMoved = false;
+
+  el.addEventListener("touchstart", (e) => {
+    if (e.touches.length === 1) {
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      isMoved = false;
+    }
+  }, { passive: true });
+
+  el.addEventListener("touchmove", (e) => {
+    if (e.touches.length === 1) {
+      const dx = Math.abs(e.touches[0].clientX - startX);
+      const dy = Math.abs(e.touches[0].clientY - startY);
+      if (dx > 8 || dy > 8) {
+        isMoved = true;
+      }
+    }
+  }, { passive: true });
+
+  el.addEventListener("click", (e) => {
+    if (isMoved) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    handler(e);
+  });
+}
 
 // Set Status Badge with State & Message
 function setStatus(type, message) {
@@ -181,7 +218,10 @@ function setView(viewMode) {
     localStorage.setItem("daikin_view_pref", viewMode);
   } catch (e) {}
 
+  const tabsWrapper = document.getElementById("device-tabs-container");
+
   if (viewMode === "overview") {
+    if (tabsWrapper) tabsWrapper.classList.add("hidden");
     overviewView.classList.remove("hidden");
     activeDeviceView.classList.add("hidden");
     unconfiguredView.classList.add("hidden");
@@ -190,6 +230,7 @@ function setView(viewMode) {
     if (toggleViewText) toggleViewText.textContent = "Controls";
     renderOverview();
   } else {
+    if (tabsWrapper) tabsWrapper.classList.remove("hidden");
     overviewView.classList.add("hidden");
 
     if (toggleViewIcon) toggleViewIcon.textContent = "🏠";
@@ -274,7 +315,7 @@ async function fetchDevices(silent = true) {
     renderTabs();
 
     if (currentView === "overview") {
-      renderOverview();
+      updateOverviewCards();
       overviewView.classList.remove("hidden");
       activeDeviceView.classList.add("hidden");
       unconfiguredView.classList.add("hidden");
@@ -298,8 +339,17 @@ async function fetchDevices(silent = true) {
   }
 }
 
-// Render Tabs Bar (Includes "All Units" as the first persistent tab)
+// Render Tabs Bar (Includes "All Units" as the first persistent tab, hidden in overview)
 function renderTabs() {
+  const tabsWrapper = document.getElementById("device-tabs-container");
+  if (tabsWrapper) {
+    if (currentView === "overview") {
+      tabsWrapper.classList.add("hidden");
+    } else {
+      tabsWrapper.classList.remove("hidden");
+    }
+  }
+
   deviceTabsContainer.innerHTML = "";
 
   // 1. All Units / Overview Tab
@@ -311,7 +361,7 @@ function renderTabs() {
     <span>🏠 All Units</span>
     <span class="tab-badge">${activeCount > 0 ? `${activeCount} On` : "All Off"}</span>
   `;
-  overviewTab.addEventListener("click", () => setView("overview"));
+  attachTouchSafeClick(overviewTab, () => setView("overview"));
   deviceTabsContainer.appendChild(overviewTab);
 
   // 2. Individual Device Tabs
@@ -334,7 +384,7 @@ function renderTabs() {
       <span class="tab-badge">${badgeText}</span>
     `;
 
-    tab.addEventListener("click", () => {
+    attachTouchSafeClick(tab, () => {
       openDeviceDetail(d.id);
     });
 
@@ -342,146 +392,108 @@ function renderTabs() {
   });
 }
 
-// Render Overview Cards (All ACs at a glance)
+// Render Overview Cards (All ACs at a glance as clean tactile tiles)
 function renderOverview() {
   if (!overviewGrid) return;
   overviewGrid.innerHTML = "";
-
-  const configured = devices.filter(d => d.configured);
-  const activeCount = configured.filter(d => d.power).length;
-  if (overviewSubtitle) {
-    overviewSubtitle.textContent = `${configured.length} unit(s) connected • ${activeCount} active`;
-  }
 
   devices.forEach(d => {
     const card = document.createElement("div");
     const isOnline = d.status !== "offline";
     const isPowerOn = !!d.power && isOnline;
-    card.className = `glance-card ${isPowerOn ? "is-on" : "is-off"}`;
-    card.id = `glance-card-${d.id}`;
-
-    // Mode badge
-    let badgeHtml = "";
-    if (!d.configured) {
-      badgeHtml = `<span class="glance-badge badge-off">Unpaired</span>`;
-    } else if (!isOnline) {
-      badgeHtml = `<span class="glance-badge badge-off">Offline</span>`;
-    } else if (isPowerOn) {
-      const mode = d.mode || "cool";
-      badgeHtml = `<span class="glance-badge ${mode === 'heat' ? 'badge-heat' : 'badge-cool'}">${modeIcon(mode)} ${mode.toUpperCase()}</span>`;
-    } else {
-      badgeHtml = `<span class="glance-badge badge-off">⚪ OFF</span>`;
-    }
+    card.className = `ac-tile ${isPowerOn ? "is-on" : "is-off"}`;
+    card.id = `ac-tile-${d.id}`;
 
     const roomName = d.name || d.id;
-    const targetTempDisplay = d.target_temp !== undefined && d.target_temp !== null ? Number(d.target_temp).toFixed(1) : "24.0";
-    const indoorTempDisplay = d.indoor_temp !== undefined && d.indoor_temp !== null ? Number(d.indoor_temp).toFixed(1) : "--";
+    const currentTarget = devicePendingTemp[d.id] !== undefined
+      ? devicePendingTemp[d.id]
+      : (d.target_temp !== undefined && d.target_temp !== null ? Number(d.target_temp) : 24.0);
+    const targetTempDisplay = currentTarget.toFixed(1);
 
     card.innerHTML = `
-      <div class="glance-card-header">
-        <div class="glance-title-area">
-          <div class="glance-title-row">
-            <span class="glance-room-name">${roomName}</span>
-            <button class="btn-rename btn-rename-card" title="Rename this room" data-id="${d.id}">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
-              </svg>
-            </button>
-          </div>
-          <span class="glance-ip-label">${d.ip || "No IP assigned"} • BRP072C42</span>
+      <div class="tile-header">
+        <div class="tile-title-row">
+          <span class="tile-name">${roomName}</span>
+          <button class="btn-tile-rename" title="Rename ${roomName}" data-id="${d.id}" aria-label="Rename ${roomName}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+            </svg>
+          </button>
         </div>
-        ${badgeHtml}
+        <button class="btn-tile-detail" title="Detailed controls for ${roomName}" data-id="${d.id}" aria-label="Detailed controls for ${roomName}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
       </div>
 
-      <div class="glance-body">
-        <button class="glance-power-btn ${isPowerOn ? 'is-on' : ''}" data-id="${d.id}" aria-label="Toggle Power for ${roomName}">
+      <div class="tile-controls">
+        <button class="tile-power-btn ${isPowerOn ? 'is-on' : ''}" data-id="${d.id}" aria-label="Toggle Power for ${roomName}">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
             <path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/>
           </svg>
-          <span class="glance-power-label">${isPowerOn ? 'ON' : 'OFF'}</span>
+          <span class="tile-power-label">${isPowerOn ? 'ON' : 'OFF'}</span>
         </button>
 
-        <div class="glance-temp-group">
-          <div class="glance-temp-block">
-            <span class="glance-temp-label">Room</span>
-            <div class="glance-temp-value">${indoorTempDisplay}<span class="glance-temp-unit">°C</span></div>
+        <div class="tile-stepper-wrap">
+          <button class="tile-step-btn btn-step-down" data-id="${d.id}" aria-label="Decrease Temperature">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
+          <div class="tile-temp-display">
+            <span class="tile-temp-num" id="tile-temp-num-${d.id}">${targetTempDisplay}</span>
+            <span class="tile-temp-unit">°C</span>
           </div>
-
-          <div class="glance-temp-block">
-            <span class="glance-temp-label">Set</span>
-            <div class="glance-temp-value">${targetTempDisplay}<span class="glance-temp-unit">°C</span></div>
-          </div>
-
-          <div class="glance-stepper-col">
-            <button class="glance-stepper-btn btn-stepper-up" data-id="${d.id}" aria-label="Increase Temp">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-                <line x1="12" y1="5" x2="12" y2="19"></line>
-                <line x1="5" y1="12" x2="19" y2="12"></line>
-              </svg>
-            </button>
-            <button class="glance-stepper-btn btn-stepper-down" data-id="${d.id}" aria-label="Decrease Temp">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
-                <line x1="5" y1="12" x2="19" y2="12"></line>
-              </svg>
-            </button>
-          </div>
+          <button class="tile-step-btn btn-step-up" data-id="${d.id}" aria-label="Increase Temperature">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
         </div>
-      </div>
-
-      <div class="glance-footer">
-        <span class="glance-meta-text">
-          ${isPowerOn ? `Fan: ${fanLabel(d.fan_rate)} • Swing: ${swingLabel(d.fan_dir)}` : "Standby / Idle"}
-        </span>
-        <button class="glance-btn-detail" data-id="${d.id}">
-          <span>Controls</span>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
-            <polyline points="9 18 15 12 9 6"></polyline>
-          </svg>
-        </button>
       </div>
     `;
 
-    // Rename button
-    const renameBtn = card.querySelector(".btn-rename-card");
+    // Touch-safe click bindings
+    const renameBtn = card.querySelector(".btn-tile-rename");
     if (renameBtn) {
-      renameBtn.addEventListener("click", (e) => {
+      attachTouchSafeClick(renameBtn, (e) => {
         e.stopPropagation();
         openRenameModal(d.id);
       });
     }
 
-    // Power toggle button
-    const powerBtn = card.querySelector(".glance-power-btn");
+    const detailBtn = card.querySelector(".btn-tile-detail");
+    if (detailBtn) {
+      attachTouchSafeClick(detailBtn, (e) => {
+        e.stopPropagation();
+        openDeviceDetail(d.id);
+      });
+    }
+
+    const powerBtn = card.querySelector(".tile-power-btn");
     if (powerBtn) {
-      powerBtn.addEventListener("click", (e) => {
+      attachTouchSafeClick(powerBtn, (e) => {
         e.stopPropagation();
         toggleDevicePower(d.id);
       });
     }
 
-    // Stepper buttons
-    const upBtn = card.querySelector(".btn-stepper-up");
-    if (upBtn) {
-      upBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        nudgeDeviceTemp(d.id, 0.5);
-      });
-    }
-
-    const downBtn = card.querySelector(".btn-stepper-down");
+    const downBtn = card.querySelector(".btn-step-down");
     if (downBtn) {
-      downBtn.addEventListener("click", (e) => {
+      attachTouchSafeClick(downBtn, (e) => {
         e.stopPropagation();
         nudgeDeviceTemp(d.id, -0.5);
       });
     }
 
-    // Detail button (Explicit tap required to navigate to detailed controls)
-    const detailBtn = card.querySelector(".glance-btn-detail");
-    if (detailBtn) {
-      detailBtn.addEventListener("click", (e) => {
+    const upBtn = card.querySelector(".btn-step-up");
+    if (upBtn) {
+      attachTouchSafeClick(upBtn, (e) => {
         e.stopPropagation();
-        openDeviceDetail(d.id);
+        nudgeDeviceTemp(d.id, 0.5);
       });
     }
 
@@ -489,23 +501,88 @@ function renderOverview() {
   });
 }
 
-// Quick Control: Power Toggle on Overview Card
+// In-place DOM update for 15s background polling (Zero DOM rebuilding, no scroll/touch disruption)
+function updateOverviewCards() {
+  if (!overviewGrid) return;
+  const cards = overviewGrid.querySelectorAll(".ac-tile");
+  if (cards.length !== devices.length) {
+    renderOverview();
+    return;
+  }
+
+  devices.forEach(d => {
+    const card = document.getElementById(`ac-tile-${d.id}`);
+    if (!card) {
+      renderOverview();
+      return;
+    }
+
+    const isOnline = d.status !== "offline";
+    const isPowerOn = !!d.power && isOnline;
+
+    if (!devicePowerInFlight[d.id]) {
+      card.classList.toggle("is-on", isPowerOn);
+      card.classList.toggle("is-off", !isPowerOn);
+      const pBtn = card.querySelector(".tile-power-btn");
+      if (pBtn) {
+        pBtn.classList.toggle("is-on", isPowerOn);
+        const pLabel = pBtn.querySelector(".tile-power-label");
+        if (pLabel) pLabel.textContent = isPowerOn ? "ON" : "OFF";
+      }
+    }
+
+    const nameEl = card.querySelector(".tile-name");
+    if (nameEl && nameEl.textContent !== (d.name || d.id)) {
+      nameEl.textContent = d.name || d.id;
+    }
+
+    if (devicePendingTemp[d.id] === undefined) {
+      const tempEl = document.getElementById(`tile-temp-num-${d.id}`);
+      if (tempEl && d.target_temp !== undefined && d.target_temp !== null) {
+        tempEl.textContent = Number(d.target_temp).toFixed(1);
+      }
+    }
+  });
+}
+
+// Quick Control: Power Toggle with Optimistic Feedback & In-Flight Guard
 async function toggleDevicePower(deviceId) {
   const dev = devices.find(d => d.id === deviceId);
   if (!dev) return;
+  if (devicePowerInFlight[deviceId]) return;
 
   const newPower = !dev.power;
   dev.power = newPower;
 
-  // Immediate optimistic update
-  renderOverview();
-  renderTabs();
+  // Immediate optimistic update in Overview Tile (in-place)
+  const tile = document.getElementById(`ac-tile-${deviceId}`);
+  if (tile) {
+    tile.classList.toggle("is-on", newPower);
+    tile.classList.toggle("is-off", !newPower);
+    const pBtn = tile.querySelector(".tile-power-btn");
+    if (pBtn) {
+      pBtn.classList.toggle("is-on", newPower);
+      const label = pBtn.querySelector(".tile-power-label");
+      if (label) label.textContent = newPower ? "ON" : "OFF";
+    }
+  }
 
+  // Immediate optimistic update in Detail View
   if (deviceId === activeDeviceId && currentView === "detail") {
     applyOptimisticPower(newPower);
   }
 
+  // Immediate update on Tab Badge
+  const tab = document.getElementById(`tab-${deviceId}`);
+  if (tab) {
+    const badge = tab.querySelector(".tab-badge");
+    if (badge) {
+      badge.textContent = newPower ? `${Number(dev.target_temp || 24).toFixed(1)}°C` : "OFF";
+    }
+  }
+
   showToast(`${dev.name || dev.id}: Turning ${newPower ? "ON" : "OFF"}...`);
+  devicePowerInFlight[deviceId] = true;
 
   try {
     const res = await fetch(`/api/devices/${deviceId}/control`, {
@@ -517,56 +594,101 @@ async function toggleDevicePower(deviceId) {
     if (updated.error) throw new Error(updated.error);
     Object.assign(dev, updated);
     try { localStorage.setItem("daikin_devices_cache", JSON.stringify(devices)); } catch (e) {}
-    renderOverview();
-    renderTabs();
     showToast(`${dev.name || dev.id}: ${newPower ? "ON" : "OFF"}`);
   } catch (err) {
-    showToast(`Error: ${err.message}`, true);
-    fetchDevices(true);
+    dev.power = !newPower;
+    if (tile) {
+      tile.classList.toggle("is-on", !newPower);
+      tile.classList.toggle("is-off", newPower);
+      const pBtn = tile.querySelector(".tile-power-btn");
+      if (pBtn) {
+        pBtn.classList.toggle("is-on", !newPower);
+        const label = pBtn.querySelector(".tile-power-label");
+        if (label) label.textContent = !newPower ? "ON" : "OFF";
+      }
+    }
+    showToast(`Failed to switch power: ${err.message}`, true);
+  } finally {
+    devicePowerInFlight[deviceId] = false;
   }
 }
 
-// Quick Control: Temp +/- Stepper on Overview Card (Debounced)
+// Pooled Temperature Stepper: 0ms DOM update, 750ms debounce, in-flight queueing
 function nudgeDeviceTemp(deviceId, delta) {
   const dev = devices.find(d => d.id === deviceId);
   if (!dev) return;
 
-  const current = Number(dev.target_temp || 24.0);
+  const current = devicePendingTemp[deviceId] !== undefined
+    ? devicePendingTemp[deviceId]
+    : Number(dev.target_temp || 24.0);
   const minTemp = Number(dev.min_temp || 18.0);
   const maxTemp = Number(dev.max_temp || 32.0);
   const nextTemp = Math.min(maxTemp, Math.max(minTemp, Math.round((current + delta) * 10) / 10));
 
+  devicePendingTemp[deviceId] = nextTemp;
   dev.target_temp = nextTemp;
-  renderOverview();
-  renderTabs();
 
+  // 1. Instant 0ms update in Overview tile (in-place DOM, NO re-render!)
+  const tempEl = document.getElementById(`tile-temp-num-${deviceId}`);
+  if (tempEl) {
+    tempEl.textContent = nextTemp.toFixed(1);
+  }
+
+  // 2. Instant 0ms update in Detail view if active
   if (deviceId === activeDeviceId && currentView === "detail") {
     applyOptimisticTemp(nextTemp);
   }
 
-  if (!devicePending[deviceId]) devicePending[deviceId] = {};
-  devicePending[deviceId].target_temp = nextTemp;
+  // 3. Instant 0ms update on Tab badge
+  const tabBadge = document.querySelector(`#tab-${deviceId} .tab-badge`);
+  if (tabBadge && dev.power) {
+    tabBadge.textContent = `${nextTemp.toFixed(1)}°C`;
+  }
 
-  if (deviceTimers[deviceId]) clearTimeout(deviceTimers[deviceId]);
-  deviceTimers[deviceId] = setTimeout(async () => {
-    const patch = { ...devicePending[deviceId] };
-    delete devicePending[deviceId];
-    try {
-      const res = await fetch(`/api/devices/${deviceId}/control`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch)
-      });
-      const updated = await res.json();
-      if (updated.error) throw new Error(updated.error);
-      Object.assign(dev, updated);
-      try { localStorage.setItem("daikin_devices_cache", JSON.stringify(devices)); } catch (e) {}
-      renderOverview();
-      renderTabs();
-    } catch (err) {
-      showToast(`Error adjusting temperature: ${err.message}`, true);
+  // 4. Debounce the single network request to Xiao
+  if (deviceDebounceTimers[deviceId]) {
+    clearTimeout(deviceDebounceTimers[deviceId]);
+  }
+
+  deviceDebounceTimers[deviceId] = setTimeout(() => {
+    delete deviceDebounceTimers[deviceId];
+    flushPooledTemp(deviceId);
+  }, 750);
+}
+
+// Flush Accumulated Pooled Temperature to Server
+async function flushPooledTemp(deviceId) {
+  if (deviceInFlight[deviceId]) {
+    deviceNeedsFlush[deviceId] = true;
+    return;
+  }
+  if (devicePendingTemp[deviceId] === undefined) return;
+
+  const targetToSend = devicePendingTemp[deviceId];
+  const dev = devices.find(d => d.id === deviceId);
+  deviceInFlight[deviceId] = true;
+  deviceNeedsFlush[deviceId] = false;
+
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/control`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target_temp: targetToSend })
+    });
+    const updated = await res.json();
+    if (updated.error) throw new Error(updated.error);
+    if (dev) Object.assign(dev, updated);
+    try { localStorage.setItem("daikin_devices_cache", JSON.stringify(devices)); } catch (e) {}
+  } catch (err) {
+    showToast(`Error adjusting temp for ${dev?.name || deviceId}: ${err.message}`, true);
+  } finally {
+    deviceInFlight[deviceId] = false;
+    if (devicePendingTemp[deviceId] !== targetToSend || deviceNeedsFlush[deviceId]) {
+      flushPooledTemp(deviceId);
+    } else {
+      delete devicePendingTemp[deviceId];
     }
-  }, 350);
+  }
 }
 
 // Quick Action: Turn All Running Units Off
@@ -577,8 +699,24 @@ async function turnAllOff() {
     return;
   }
 
-  activeUnits.forEach(d => { d.power = false; });
-  renderOverview();
+  activeUnits.forEach(d => {
+    d.power = false;
+    const tile = document.getElementById(`ac-tile-${d.id}`);
+    if (tile) {
+      tile.classList.remove("is-on");
+      tile.classList.add("is-off");
+      const pBtn = tile.querySelector(".tile-power-btn");
+      if (pBtn) {
+        pBtn.classList.remove("is-on");
+        const label = pBtn.querySelector(".tile-power-label");
+        if (label) label.textContent = "OFF";
+      }
+    }
+  });
+
+  if (activeDeviceId && currentView === "detail") {
+    applyOptimisticPower(false);
+  }
   renderTabs();
   showToast("Turning all units off...");
 
@@ -1017,95 +1155,85 @@ async function saveRename() {
 }
 
 // Event Listeners for Single Unit Controls
-document.getElementById("btn-power").addEventListener("click", () => {
-  if (!activeDeviceState) return;
-  const currentPower = pendingPatch.power !== undefined ? pendingPatch.power : !!activeDeviceState.power;
-  const nextPower = !currentPower;
-  applyOptimisticPower(nextPower);
-  queuePatch({ power: nextPower }, 250);
-});
+const btnPowerDetail = document.getElementById("btn-power");
+if (btnPowerDetail) {
+  attachTouchSafeClick(btnPowerDetail, () => {
+    if (!activeDeviceId) return;
+    toggleDevicePower(activeDeviceId);
+  });
+}
 
-document.getElementById("btn-temp-up").addEventListener("click", () => {
-  if (!activeDeviceState) return;
-  const activeMode = pendingPatch.mode || activeDeviceState.mode;
-  if (activeMode === "fan" || activeMode === "dry") {
-    showToast(`Temperature is not adjustable in ${activeMode.toUpperCase()} mode`);
-    return;
-  }
-  const maxTemp = (activeDeviceState && activeDeviceState.max_temp !== undefined) ? Number(activeDeviceState.max_temp) : 32.0;
-  const currentTemp = pendingPatch.target_temp !== undefined
-    ? pendingPatch.target_temp
-    : (parseFloat(valTargetTemp.textContent) || 24.0);
-  if (currentTemp < maxTemp) {
-    const nextTemp = Math.min(maxTemp, Math.round((currentTemp + 0.5) * 10) / 10);
-    applyOptimisticTemp(nextTemp);
-    queuePatch({ target_temp: nextTemp }, 350);
-  }
-});
+const btnTempUpDetail = document.getElementById("btn-temp-up");
+if (btnTempUpDetail) {
+  attachTouchSafeClick(btnTempUpDetail, () => {
+    if (!activeDeviceId) return;
+    const activeMode = pendingPatch.mode || (activeDeviceState && activeDeviceState.mode);
+    if (activeMode === "fan" || activeMode === "dry") {
+      showToast(`Temperature is not adjustable in ${activeMode.toUpperCase()} mode`);
+      return;
+    }
+    nudgeDeviceTemp(activeDeviceId, 0.5);
+  });
+}
 
-document.getElementById("btn-temp-down").addEventListener("click", () => {
-  if (!activeDeviceState) return;
-  const activeMode = pendingPatch.mode || activeDeviceState.mode;
-  if (activeMode === "fan" || activeMode === "dry") {
-    showToast(`Temperature is not adjustable in ${activeMode.toUpperCase()} mode`);
-    return;
-  }
-  const minTemp = (activeDeviceState && activeDeviceState.min_temp !== undefined) ? Number(activeDeviceState.min_temp) : 18.0;
-  const currentTemp = pendingPatch.target_temp !== undefined
-    ? pendingPatch.target_temp
-    : (parseFloat(valTargetTemp.textContent) || 24.0);
-  if (currentTemp > minTemp) {
-    const nextTemp = Math.max(minTemp, Math.round((currentTemp - 0.5) * 10) / 10);
-    applyOptimisticTemp(nextTemp);
-    queuePatch({ target_temp: nextTemp }, 350);
-  }
-});
+const btnTempDownDetail = document.getElementById("btn-temp-down");
+if (btnTempDownDetail) {
+  attachTouchSafeClick(btnTempDownDetail, () => {
+    if (!activeDeviceId) return;
+    const activeMode = pendingPatch.mode || (activeDeviceState && activeDeviceState.mode);
+    if (activeMode === "fan" || activeMode === "dry") {
+      showToast(`Temperature is not adjustable in ${activeMode.toUpperCase()} mode`);
+      return;
+    }
+    nudgeDeviceTemp(activeDeviceId, -0.5);
+  });
+}
 
 // Mode buttons
 document.querySelectorAll("#mode-selector .chip-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
+  attachTouchSafeClick(btn, () => {
     if (!activeDeviceState) return;
     const nextMode = btn.dataset.mode;
     applyOptimisticMode(nextMode);
-    queuePatch({ mode: nextMode }, 250);
+    queuePatch({ mode: nextMode }, 300);
   });
 });
 
 // Fan buttons
 document.querySelectorAll("#fan-selector .chip-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
+  attachTouchSafeClick(btn, () => {
     if (!activeDeviceState) return;
     const nextFan = btn.dataset.fan;
     applyOptimisticFan(nextFan);
-    queuePatch({ fan_rate: nextFan }, 250);
+    queuePatch({ fan_rate: nextFan }, 300);
   });
 });
 
 // Swing buttons
 document.querySelectorAll("#swing-selector .chip-btn").forEach(btn => {
-  btn.addEventListener("click", () => {
+  attachTouchSafeClick(btn, () => {
     if (!activeDeviceState) return;
     const nextSwing = btn.dataset.swing;
     applyOptimisticSwing(nextSwing);
-    queuePatch({ fan_dir: nextSwing }, 250);
+    queuePatch({ fan_dir: nextSwing }, 300);
   });
 });
 
 // View Toggle & Back Navigation
 if (btnToggleView) {
-  btnToggleView.addEventListener("click", () => {
+  attachTouchSafeClick(btnToggleView, () => {
     setView(currentView === "overview" ? "detail" : "overview");
   });
 }
 
 if (btnBackToOverview) {
-  btnBackToOverview.addEventListener("click", () => {
+  attachTouchSafeClick(btnBackToOverview, () => {
     setView("overview");
   });
 }
 
 if (btnAllOff) {
-  btnAllOff.addEventListener("click", turnAllOff);
+  attachTouchSafeClick(btnAllOff, turnAllOff);
 }
 
 // Rename Active Unit from Detail View Header
@@ -1170,9 +1298,9 @@ function closeDiscoveryModal() {
   }
 }
 
-if (btnOpenDiscovery) btnOpenDiscovery.addEventListener("click", openDiscoveryModal);
-if (btnCloseModal) btnCloseModal.addEventListener("click", closeDiscoveryModal);
-if (btnSetupOpenDiscovery) btnSetupOpenDiscovery.addEventListener("click", openDiscoveryModal);
+if (btnOpenDiscovery) attachTouchSafeClick(btnOpenDiscovery, openDiscoveryModal);
+if (btnCloseModal) attachTouchSafeClick(btnCloseModal, closeDiscoveryModal);
+if (btnSetupOpenDiscovery) attachTouchSafeClick(btnSetupOpenDiscovery, openDiscoveryModal);
 
 if (modalDiscovery) {
   modalDiscovery.addEventListener("click", (e) => {

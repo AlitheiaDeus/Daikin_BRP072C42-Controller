@@ -339,8 +339,9 @@ def start():
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nServer stopped.")
+    except Exception as exc:
+        print(f"\n[Fatal Server Error] {exc}")
 
 
-if __name__ == "__main__":
-    start()
+start()
 

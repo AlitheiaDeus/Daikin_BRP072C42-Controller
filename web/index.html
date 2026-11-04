@@ -22,44 +22,23 @@
     <!-- Header -->
     <header class="app-header">
       <div class="brand">
-        <div class="brand-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="2" x2="12" y2="22"></line>
-            <path d="m20 16-4-4 4-4"></path>
-            <path d="m4 8 4 4-4 4"></path>
-            <path d="m16 4-4 4-4-4"></path>
-            <path d="m8 20 4-4 4 4"></path>
-          </svg>
-        </div>
-        <div class="brand-text">
-          <h1>DAIKIN <span class="badge-direct">LAN DIRECT</span></h1>
-          <p class="subtitle">BRP072C42 Multi-Unit Controller</p>
-        </div>
+        <h1 class="brand-title">Daikin AC</h1>
       </div>
 
       <div class="header-actions">
-        <div class="connection-status" id="connection-status">
-          <span class="status-pulse"></span>
-          <span class="status-text" id="status-text">Connected</span>
-        </div>
-        <button id="btn-toggle-view" class="pill-btn" title="Toggle Overview / Detailed View">
-          <span class="btn-icon" id="toggle-view-icon">🏠</span>
-          <span id="toggle-view-text">All Units</span>
+        <button id="btn-all-off" class="pill-btn pill-btn-danger" title="Turn all running units off">
+          <span class="btn-icon">⏹️</span>
+          <span>Turn All Off</span>
         </button>
         <button id="btn-open-discovery" class="pill-btn" title="Discover & Configure Units">
           <span class="btn-icon">📡</span>
           <span>Units & Keys</span>
         </button>
-        <button id="btn-refresh" class="icon-button" title="Refresh Telemetry">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
-          </svg>
-        </button>
       </div>
     </header>
 
-    <!-- Multi-Device Tabs -->
-    <nav class="device-tabs-container">
+    <!-- Multi-Device Tabs (Only shown in detailed controls view) -->
+    <nav class="device-tabs-container hidden" id="device-tabs-container">
       <div class="device-tabs" id="device-tabs">
         <!-- Rendered by JS -->
       </div>
@@ -75,19 +54,6 @@
 
       <!-- Overview / Landing View: All ACs at a glance -->
       <div id="overview-view" class="view-panel">
-        <div class="overview-header-bar">
-          <div class="overview-stats">
-            <h2 class="overview-title">All Climate Units</h2>
-            <p class="overview-subtitle" id="overview-subtitle">All units at a glance</p>
-          </div>
-          <div class="overview-actions">
-            <button id="btn-all-off" class="pill-btn pill-btn-danger" title="Turn all running units off">
-              <span class="btn-icon">⏹️</span>
-              <span>Turn All Off</span>
-            </button>
-          </div>
-        </div>
-
         <div class="overview-grid" id="overview-grid">
           <!-- Room cards rendered dynamically by JS -->
         </div>
