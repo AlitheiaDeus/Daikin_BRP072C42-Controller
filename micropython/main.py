@@ -49,14 +49,29 @@ async def send_cors(writer):
     await writer.drain()
 
 
-async def serve_file(writer, filepath, mime_type):
+async def serve_file(writer, filepath, mime_type, req_headers=None, has_version_query=False):
     try:
+        gz_path = filepath + ".gz"
+        use_gzip = False
+        if req_headers and "gzip" in req_headers.get("accept-encoding", "").lower():
+            try:
+                os.stat(gz_path)
+                filepath = gz_path
+                use_gzip = True
+            except OSError:
+                pass
+
         size = os.stat(filepath)[6]
         writer.write(b"HTTP/1.1 200 OK\r\n")
         writer.write(f"Content-Type: {mime_type}\r\n".encode())
+        if use_gzip:
+            writer.write(b"Content-Encoding: gzip\r\n")
         writer.write(f"Content-Length: {size}\r\n".encode())
         writer.write(b"Access-Control-Allow-Origin: *\r\n")
-        writer.write(b"Cache-Control: no-cache\r\n")
+        if has_version_query:
+            writer.write(b"Cache-Control: public, max-age=604800, immutable\r\n")
+        else:
+            writer.write(b"Cache-Control: no-cache\r\n")
         writer.write(b"Connection: close\r\n\r\n")
         await writer.drain()
 
@@ -92,6 +107,7 @@ async def handle_client(reader, writer):
 
         # Read headers
         content_length = 0
+        req_headers = {}
         while True:
             hline = await reader.readline()
             if not hline or hline == b"\r\n" or hline == b"\n":
@@ -99,9 +115,12 @@ async def handle_client(reader, writer):
             line_str = hline.decode("utf-8", "ignore")
             if ":" in line_str:
                 hk, hv = line_str.split(":", 1)
-                if hk.strip().lower() == "content-length":
+                hk_clean = hk.strip().lower()
+                hv_clean = hv.strip()
+                req_headers[hk_clean] = hv_clean
+                if hk_clean == "content-length":
                     try:
-                        content_length = int(hv.strip())
+                        content_length = int(hv_clean)
                     except ValueError:
                         pass
 
@@ -266,15 +285,16 @@ async def handle_client(reader, writer):
                 await send_json(writer, {"error": str(e)}, 500)
                 return
 
-        # Static Web Files
-        if path == "/" or path == "/index.html":
-            await serve_file(writer, "web/index.html", "text/html; charset=utf-8")
+        # Static Web Files & Dashboard Route
+        has_version = bool(query_str)
+        if path in ("/", "/index.html", "/dashboard"):
+            await serve_file(writer, "web/index.html", "text/html; charset=utf-8", req_headers, False)
             return
-        elif path == "/style.css" or path == "/web/style.css":
-            await serve_file(writer, "web/style.css", "text/css; charset=utf-8")
+        elif path in ("/style.css", "/web/style.css"):
+            await serve_file(writer, "web/style.css", "text/css; charset=utf-8", req_headers, has_version)
             return
-        elif path == "/app.js" or path == "/web/app.js":
-            await serve_file(writer, "web/app.js", "application/javascript; charset=utf-8")
+        elif path in ("/app.js", "/web/app.js"):
+            await serve_file(writer, "web/app.js", "application/javascript; charset=utf-8", req_headers, has_version)
             return
 
         # 404 Fallback
@@ -309,6 +329,7 @@ async def background_poller():
         for ctrl in configured_devs:
             try:
                 ctrl.get_full_state()
+                manager.save_cache()
             except Exception as exc:
                 print(f"[{ctrl.name}] Poll error: {exc}")
             gc.collect()

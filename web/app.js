@@ -211,14 +211,39 @@ function swingLabel(dir) {
   return "Off";
 }
 
-// View Management: Toggle between Overview and Detailed Controls
-function setView(viewMode) {
+// View Management: Toggle between Overview, Detailed Controls, and Technical Dashboard
+function setView(viewMode, pushHistory = true) {
   currentView = viewMode;
   try {
     localStorage.setItem("daikin_view_pref", viewMode);
   } catch (e) {}
 
   const tabsWrapper = document.getElementById("device-tabs-container");
+  const dashboardView = document.getElementById("dashboard-view");
+  const headerActions = document.getElementById("header-actions");
+
+  // On mobile, hide header action buttons when viewing a single unit
+  if (viewMode === "detail") {
+    if (headerActions) headerActions.classList.add("mobile-hide-in-detail");
+  } else {
+    if (headerActions) headerActions.classList.remove("mobile-hide-in-detail");
+  }
+
+  if (viewMode === "dashboard") {
+    if (tabsWrapper) tabsWrapper.classList.add("hidden");
+    if (overviewView) overviewView.classList.add("hidden");
+    if (activeDeviceView) activeDeviceView.classList.add("hidden");
+    if (unconfiguredView) unconfiguredView.classList.add("hidden");
+    if (dashboardView) dashboardView.classList.remove("hidden");
+
+    if (pushHistory) {
+      try { history.pushState({ view: "dashboard" }, "", "#dashboard"); } catch (e) {}
+    }
+    renderDashboard();
+    return;
+  }
+
+  if (dashboardView) dashboardView.classList.add("hidden");
 
   if (viewMode === "overview") {
     if (tabsWrapper) tabsWrapper.classList.add("hidden");
@@ -228,6 +253,10 @@ function setView(viewMode) {
 
     if (toggleViewIcon) toggleViewIcon.textContent = "🎛️";
     if (toggleViewText) toggleViewText.textContent = "Controls";
+    
+    if (pushHistory) {
+      try { history.pushState({ view: "overview" }, "", "#overview"); } catch (e) {}
+    }
     renderOverview();
   } else {
     if (tabsWrapper) tabsWrapper.classList.remove("hidden");
@@ -236,7 +265,16 @@ function setView(viewMode) {
     if (toggleViewIcon) toggleViewIcon.textContent = "🏠";
     if (toggleViewText) toggleViewText.textContent = "All Units";
 
+    // Auto-open sensors drawer on desktop to eliminate dead space
+    const sensorsDrawer = document.getElementById("sensors-drawer");
+    if (sensorsDrawer && window.innerWidth > 768) {
+      sensorsDrawer.open = true;
+    }
+
     if (activeDeviceId) {
+      if (pushHistory) {
+        try { history.pushState({ view: "detail", id: activeDeviceId }, "", "#unit-" + activeDeviceId); } catch (e) {}
+      }
       switchTab(activeDeviceId);
     }
   }
@@ -244,13 +282,26 @@ function setView(viewMode) {
   renderTabs();
 }
 
-function openDeviceDetail(deviceId) {
+function openDeviceDetail(deviceId, pushHistory = true) {
   activeDeviceId = deviceId;
   try {
     localStorage.setItem("daikin_active_device_id", deviceId);
   } catch (e) {}
-  setView("detail");
+  setView("detail", pushHistory);
 }
+
+// Hardware & Browser Back-Button Navigation
+window.addEventListener("popstate", (e) => {
+  const state = e.state;
+  if (!state || state.view === "overview") {
+    setView("overview", false);
+  } else if (state.view === "detail" && state.id) {
+    activeDeviceId = state.id;
+    setView("detail", false);
+  } else if (state.view === "dashboard") {
+    setView("dashboard", false);
+  }
+});
 
 // Blank live fields immediately on tab switch ONLY when no state exists
 function blankActiveFields(deviceMeta) {
@@ -397,6 +448,25 @@ function renderOverview() {
   if (!overviewGrid) return;
   overviewGrid.innerHTML = "";
 
+  if (!devices || devices.length === 0) {
+    // Render 4 sleek loading skeleton tiles so user never sees a blank void
+    for (let i = 1; i <= 4; i++) {
+      const skeleton = document.createElement("div");
+      skeleton.className = "ac-tile is-off skeleton-tile";
+      skeleton.innerHTML = `
+        <div class="tile-header">
+          <span class="tile-name">Loading AC ${i}...</span>
+          <span class="tile-controls-badge">⏳</span>
+        </div>
+        <div class="tile-controls" style="justify-content:center; padding: 10px 0;">
+          <span style="font-size:0.85rem; color:var(--text-muted);">Syncing from hub...</span>
+        </div>
+      `;
+      overviewGrid.appendChild(skeleton);
+    }
+    return;
+  }
+
   devices.forEach(d => {
     const card = document.createElement("div");
     const isOnline = d.status !== "offline";
@@ -414,18 +484,11 @@ function renderOverview() {
       <div class="tile-header">
         <div class="tile-title-row">
           <span class="tile-name">${roomName}</span>
-          <button class="btn-tile-rename" title="Rename ${roomName}" data-id="${d.id}" aria-label="Rename ${roomName}">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
-            </svg>
-          </button>
         </div>
-        <button class="btn-tile-detail" title="Detailed controls for ${roomName}" data-id="${d.id}" aria-label="Detailed controls for ${roomName}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="3"></circle>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
-          </svg>
-        </button>
+        <div class="tile-controls-badge" title="Tap card for detailed controls">
+          <span>🎛️</span>
+          <span class="badge-text">Controls</span>
+        </div>
       </div>
 
       <div class="tile-controls">
@@ -456,22 +519,10 @@ function renderOverview() {
       </div>
     `;
 
-    // Touch-safe click bindings
-    const renameBtn = card.querySelector(".btn-tile-rename");
-    if (renameBtn) {
-      attachTouchSafeClick(renameBtn, (e) => {
-        e.stopPropagation();
-        openRenameModal(d.id);
-      });
-    }
-
-    const detailBtn = card.querySelector(".btn-tile-detail");
-    if (detailBtn) {
-      attachTouchSafeClick(detailBtn, (e) => {
-        e.stopPropagation();
-        openDeviceDetail(d.id);
-      });
-    }
+    // Tap entire card to open detailed controls (touch-safe: ignores scroll gestures)
+    attachTouchSafeClick(card, () => {
+      openDeviceDetail(d.id);
+    });
 
     const powerBtn = card.querySelector(".tile-power-btn");
     if (powerBtn) {
@@ -1259,6 +1310,92 @@ if (inputRenameName) {
   });
 }
 
+// Technical Diagnostics Dashboard (Desktop Full Table View)
+function renderDashboard() {
+  const tbody = document.getElementById("dashboard-table-body");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+
+  if (!devices || devices.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center; padding: 30px; color: var(--text-muted);">Syncing diagnostics from hub...</td></tr>`;
+    return;
+  }
+
+  devices.forEach(dev => {
+    const tr = document.createElement("tr");
+    const isOnline = dev.status !== "offline";
+    const statusBadge = isOnline
+      ? `<span class="diag-badge online">Online</span>`
+      : `<span class="diag-badge offline">Offline</span>`;
+    
+    const powerLabel = dev.power ? `<span style="color:#00e676; font-weight:700;">ON</span>` : `<span style="color:var(--text-muted);">OFF</span>`;
+    const modeLabel = dev.mode ? `${modeIcon(dev.mode)} ${dev.mode.toUpperCase()}` : "--";
+    const targetTemp = dev.target_temp !== undefined && dev.target_temp !== null ? `${Number(dev.target_temp).toFixed(1)}°C` : "--";
+    const indoorTemp = dev.indoor_temp !== undefined && dev.indoor_temp !== null ? `${Number(dev.indoor_temp).toFixed(1)}°C` : "--";
+    const humidity = dev.humidity !== undefined && dev.humidity !== null ? `${dev.humidity}%` : "--";
+    const outdoorTemp = dev.outdoor_temp !== undefined && dev.outdoor_temp !== null ? `${Number(dev.outdoor_temp).toFixed(1)}°C` : "--";
+    const cmpFreq = dev.cmpfreq !== undefined && dev.cmpfreq !== null ? `${dev.cmpfreq} Hz` : "--";
+    const runtime = dev.runtime !== undefined && dev.runtime !== null ? `${dev.runtime} m` : "--";
+    const errorText = dev.error && dev.error !== "0" && dev.error !== "Normal" ? `<span style="color:#ff5252; font-weight:700;">⚠️ ${dev.error}</span>` : `<span style="color:#00e676;">0 (Normal)</span>`;
+
+    tr.innerHTML = `
+      <td>
+        <div class="diag-unit-title">${dev.name || dev.id}</div>
+        <div class="diag-unit-sub">${dev.id}</div>
+      </td>
+      <td>
+        <div style="font-weight:600;">${dev.ip || "--"}</div>
+        <div class="diag-unit-sub font-mono">${dev.mac || "BRP072C42"}</div>
+      </td>
+      <td>
+        <div>${statusBadge}</div>
+        <div style="margin-top:4px; font-size:0.78rem;">${powerLabel} • ${modeLabel}</div>
+      </td>
+      <td style="font-weight:700; color:var(--accent-cyan); font-size:1rem;">${targetTemp}</td>
+      <td>
+        <div style="font-weight:600;">${indoorTemp}</div>
+        <div class="diag-unit-sub">💧 ${humidity}</div>
+      </td>
+      <td>${outdoorTemp}</td>
+      <td class="font-mono">${cmpFreq}</td>
+      <td class="font-mono">${runtime}</td>
+      <td>${errorText}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+// Sensors Accordion Summary Label Sync
+const sensorsDrawer = document.getElementById("sensors-drawer");
+if (sensorsDrawer) {
+  sensorsDrawer.addEventListener("toggle", () => {
+    const pill = sensorsDrawer.querySelector(".summary-pill");
+    if (pill) {
+      pill.textContent = sensorsDrawer.open ? "Hide" : "Show";
+    }
+  });
+}
+
+// Diagnostics Dashboard Event Listeners
+const btnOpenDashboard = document.getElementById("btn-open-dashboard");
+if (btnOpenDashboard) {
+  attachTouchSafeClick(btnOpenDashboard, () => setView("dashboard"));
+}
+
+const btnDashboardBack = document.getElementById("btn-dashboard-back");
+if (btnDashboardBack) {
+  attachTouchSafeClick(btnDashboardBack, () => setView("overview"));
+}
+
+const btnRefreshDashboard = document.getElementById("btn-refresh-dashboard");
+if (btnRefreshDashboard) {
+  attachTouchSafeClick(btnRefreshDashboard, async () => {
+    showToast("Refreshing diagnostics...");
+    await fetchDevices(false);
+    renderDashboard();
+  });
+}
+
 // Diagnostics Accordion Summary Label Sync
 if (diagnosticsDrawer) {
   diagnosticsDrawer.addEventListener("toggle", () => {
@@ -1479,7 +1616,19 @@ if (devices && devices.length > 0) {
     renderActiveView(activeDeviceState);
   }
   if (loadingState) loadingState.classList.add("hidden");
+} else {
+  // Render loading skeleton tiles immediately so page is never blank
+  renderOverview();
 }
 
-// 3. Silent background fetch from server RAM cache to reconcile fresh state
+// 3. Handle direct URL hash navigation (#dashboard or #unit-ac_X)
+const currentHash = (typeof window !== "undefined" && window.location && window.location.hash) || "";
+if (currentHash === "#dashboard") {
+  setView("dashboard", false);
+} else if (currentHash.startsWith("#unit-")) {
+  const targetId = currentHash.replace("#unit-", "");
+  openDeviceDetail(targetId, false);
+}
+
+// 4. Silent background fetch from server RAM cache to reconcile fresh state
 fetchDevices(true);

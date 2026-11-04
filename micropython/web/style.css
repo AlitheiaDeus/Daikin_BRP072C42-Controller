@@ -1520,6 +1520,200 @@ body {
   padding: 16px 28px 24px;
 }
 
+/* Responsive Tweaks & Layout Enhancements */
+.desktop-only {
+  display: inline-flex !important;
+}
+
+.mobile-only {
+  display: none !important;
+}
+
+@media (max-width: 768px) {
+  .desktop-only {
+    display: none !important;
+  }
+  .mobile-only {
+    display: inline-flex !important;
+  }
+  #header-actions.mobile-hide-in-detail {
+    display: none !important;
+  }
+}
+
+/* Foldable Sensors Drawer */
+.sensors-drawer {
+  width: 100%;
+}
+
+.sensors-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  cursor: pointer;
+  list-style: none;
+  font-weight: 600;
+  color: var(--text-main);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--radius-md);
+  transition: var(--transition-fast);
+}
+
+.sensors-summary::-webkit-details-marker {
+  display: none;
+}
+
+.sensors-summary:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.sensors-body {
+  padding-top: 14px;
+}
+
+.section-label-sm {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin: 18px 0 10px;
+}
+
+@media (min-width: 769px) {
+  /* On desktop/tablet, live sensors and technical diagnostics are auto-expanded to eliminate dead space */
+  .sensors-drawer {
+    display: block;
+  }
+  .sensors-summary {
+    pointer-events: none;
+  }
+  .sensors-summary .summary-pill {
+    display: none;
+  }
+}
+
+/* Full Diagnostics Dashboard (Desktop Table View) */
+.dashboard-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.dashboard-title {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.01em;
+}
+
+.dashboard-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.dashboard-header-buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+}
+
+.diagnostics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+  text-align: left;
+}
+
+.diagnostics-table th {
+  padding: 12px 14px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-dim);
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+}
+
+.diagnostics-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.diagnostics-table tr:hover td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.diag-unit-title {
+  font-weight: 700;
+  color: #fff;
+}
+
+.diag-unit-sub {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+}
+
+.diag-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.diag-badge.online {
+  background: rgba(0, 230, 118, 0.15);
+  color: #00e676;
+}
+
+.diag-badge.offline {
+  background: rgba(255, 82, 82, 0.15);
+  color: #ff5252;
+}
+
+.tile-controls-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-full);
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  transition: var(--transition-fast);
+}
+
+.ac-tile:hover .tile-controls-badge {
+  background: rgba(0, 229, 255, 0.12);
+  border-color: rgba(0, 229, 255, 0.3);
+  color: var(--accent-cyan);
+}
+
+.skeleton-tile {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.ac-tile {
+  cursor: pointer;
+}
+
 /* Responsive Tweaks for Mobile */
 @media (max-width: 640px) {
   .overview-grid {

@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=2">
+  <link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
   <div class="ambient-glow glow-top"></div>
@@ -25,7 +25,11 @@
         <h1 class="brand-title">Daikin AC</h1>
       </div>
 
-      <div class="header-actions">
+      <div class="header-actions" id="header-actions">
+        <button id="btn-open-dashboard" class="pill-btn desktop-only" title="Open Full Technical Diagnostics Dashboard">
+          <span class="btn-icon">📊</span>
+          <span>Dashboard</span>
+        </button>
         <button id="btn-all-off" class="pill-btn pill-btn-danger" title="Turn all running units off">
           <span class="btn-icon">⏹️</span>
           <span>Turn All Off</span>
@@ -61,8 +65,8 @@
 
       <!-- Single Device Detail View -->
       <div id="active-device-view" class="view-panel hidden">
-        <!-- Back Navigation Bar -->
-        <div class="detail-nav-bar">
+        <!-- Back Navigation Bar (Mobile only: on desktop, the top tabs bar handles All Units navigation) -->
+        <div class="detail-nav-bar mobile-only">
           <button id="btn-back-to-overview" class="btn-back" title="Back to All Units">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="back-icon">
               <line x1="19" y1="12" x2="5" y2="12"></line>
@@ -172,98 +176,139 @@
             </div>
           </section>
 
-          <!-- Telemetry & Live Sensors -->
+          <!-- Telemetry & Live Sensors (Foldable on mobile, auto-expanded on desktop) -->
           <section class="card telemetry-card">
-            <div class="telemetry-header">
-              <h3 class="card-title">Live Sensors</h3>
-              <p class="card-subtitle">Direct hardware thermistors</p>
-            </div>
-
-            <!-- Primary Climate Essentials (Prominent & Clean) -->
-            <div class="primary-sensors-row">
-              <div class="stat-box primary-stat">
-                <span class="stat-icon">🏠</span>
-                <div class="stat-meta">
-                  <span class="stat-label">Indoor Room Temp</span>
-                  <div class="stat-value" id="stat-htemp">--<span class="stat-unit">°C</span></div>
-                </div>
-              </div>
-
-              <div class="stat-box primary-stat">
-                <span class="stat-icon">💧</span>
-                <div class="stat-meta">
-                  <span class="stat-label">Indoor Humidity</span>
-                  <div class="stat-value" id="stat-hhum">--<span class="stat-unit">%</span></div>
-                </div>
-              </div>
-            </div>
-
-            <!-- Collapsible Advanced Technical Diagnostics (Decluttered) -->
-            <details class="diagnostics-drawer" id="diagnostics-drawer">
-              <summary class="diagnostics-summary">
+            <details class="sensors-drawer" id="sensors-drawer">
+              <summary class="sensors-summary">
                 <div class="summary-left">
-                  <span class="summary-icon">⚡</span>
-                  <span class="summary-text">Technical Diagnostics & Hardware</span>
+                  <span class="summary-icon">🌡️</span>
+                  <span class="summary-text">Live Sensors & Telemetry</span>
                 </div>
                 <span class="summary-pill">Show</span>
               </summary>
-              <div class="diagnostics-body">
-                <div class="telemetry-grid">
-                  <div class="stat-box">
-                    <span class="stat-icon">⛅</span>
+              <div class="sensors-body">
+                <!-- Primary Climate Essentials -->
+                <div class="primary-sensors-row">
+                  <div class="stat-box primary-stat">
+                    <span class="stat-icon">🏠</span>
                     <div class="stat-meta">
-                      <span class="stat-label">Outdoor Condenser</span>
-                      <div class="stat-value" id="stat-otemp">--<span class="stat-unit">°C</span></div>
+                      <span class="stat-label">Indoor Room Temp</span>
+                      <div class="stat-value" id="stat-htemp">--<span class="stat-unit">°C</span></div>
                     </div>
                   </div>
 
-                  <div class="stat-box">
-                    <span class="stat-icon">⚡</span>
+                  <div class="stat-box primary-stat">
+                    <span class="stat-icon">💧</span>
                     <div class="stat-meta">
-                      <span class="stat-label">Compressor Frequency</span>
-                      <div class="stat-value" id="stat-cmpfreq">--<span class="stat-unit">Hz</span></div>
-                    </div>
-                  </div>
-
-                  <div class="stat-box">
-                    <span class="stat-icon">⏱️</span>
-                    <div class="stat-meta">
-                      <span class="stat-label">Today's Runtime</span>
-                      <div class="stat-value" id="stat-runtime">--<span class="stat-unit">m</span></div>
-                    </div>
-                  </div>
-
-                  <div class="stat-box">
-                    <span class="stat-icon">🛡️</span>
-                    <div class="stat-meta">
-                      <span class="stat-label">Diagnostic Error</span>
-                      <div class="stat-value stat-ok" id="stat-error">0 (Normal)</div>
+                      <span class="stat-label">Indoor Humidity</span>
+                      <div class="stat-value" id="stat-hhum">--<span class="stat-unit">%</span></div>
                     </div>
                   </div>
                 </div>
 
-                <!-- Hardware Metadata -->
-                <div class="hardware-info-box">
-                  <div class="hw-item">
-                    <span class="hw-label">MAC Address</span>
-                    <span class="hw-value font-mono" id="hw-mac">--</span>
+                <!-- Technical Diagnostics & Hardware -->
+                <div class="diagnostics-section" id="diagnostics-section">
+                  <div class="section-label-sm">Hardware & Compression Telemetry</div>
+                  <div class="telemetry-grid">
+                    <div class="stat-box">
+                      <span class="stat-icon">⛅</span>
+                      <div class="stat-meta">
+                        <span class="stat-label">Outdoor Condenser</span>
+                        <div class="stat-value" id="stat-otemp">--<span class="stat-unit">°C</span></div>
+                      </div>
+                    </div>
+
+                    <div class="stat-box">
+                      <span class="stat-icon">⚡</span>
+                      <div class="stat-meta">
+                        <span class="stat-label">Compressor Frequency</span>
+                        <div class="stat-value" id="stat-cmpfreq">--<span class="stat-unit">Hz</span></div>
+                      </div>
+                    </div>
+
+                    <div class="stat-box">
+                      <span class="stat-icon">⏱️</span>
+                      <div class="stat-meta">
+                        <span class="stat-label">Today's Runtime</span>
+                        <div class="stat-value" id="stat-runtime">--<span class="stat-unit">m</span></div>
+                      </div>
+                    </div>
+
+                    <div class="stat-box">
+                      <span class="stat-icon">🛡️</span>
+                      <div class="stat-meta">
+                        <span class="stat-label">Diagnostic Error</span>
+                        <div class="stat-value stat-ok" id="stat-error">0 (Normal)</div>
+                      </div>
+                    </div>
                   </div>
-                  <div class="hw-item">
-                    <span class="hw-label">Firmware</span>
-                    <span class="hw-value font-mono" id="hw-firmware">--</span>
-                  </div>
-                  <div class="hw-item">
-                    <span class="hw-label">Adapter Protocol</span>
-                    <span class="hw-value">BRP072C42 (Legacy TLS)</span>
-                  </div>
-                  <div class="hw-item">
-                    <span class="hw-label">Internal AC Clock</span>
-                    <span class="hw-value font-mono" id="hw-clock">--</span>
+
+                  <!-- Hardware Metadata -->
+                  <div class="hardware-info-box">
+                    <div class="hw-item">
+                      <span class="hw-label">MAC Address</span>
+                      <span class="hw-value font-mono" id="hw-mac">--</span>
+                    </div>
+                    <div class="hw-item">
+                      <span class="hw-label">Firmware</span>
+                      <span class="hw-value font-mono" id="hw-firmware">--</span>
+                    </div>
+                    <div class="hw-item">
+                      <span class="hw-label">Adapter Protocol</span>
+                      <span class="hw-value">BRP072C42 (Legacy TLS)</span>
+                    </div>
+                    <div class="hw-item">
+                      <span class="hw-label">Internal AC Clock</span>
+                      <span class="hw-value font-mono" id="hw-clock">--</span>
+                    </div>
                   </div>
                 </div>
               </div>
             </details>
           </section>
+        </div>
+      </div>
+
+      <!-- On-Demand Full Technical Diagnostics Dashboard (Desktop) -->
+      <div id="dashboard-view" class="view-panel hidden">
+        <div class="dashboard-header-bar">
+          <div>
+            <h2 class="dashboard-title">System Diagnostics & Telemetry Dashboard</h2>
+            <p class="dashboard-subtitle">All registered Daikin AC units live telemetry, adapter hardware, and error states</p>
+          </div>
+          <div class="dashboard-header-buttons">
+            <button id="btn-refresh-dashboard" class="pill-btn" title="Refresh Diagnostics">
+              <span class="btn-icon">🔄</span>
+              <span>Refresh</span>
+            </button>
+            <button id="btn-dashboard-back" class="pill-btn pill-btn-primary" title="Back to Overview">
+              <span class="btn-icon">🏠</span>
+              <span>Back to Hub</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="dashboard-table-card card">
+          <div class="table-responsive">
+            <table class="diagnostics-table" id="dashboard-table">
+              <thead>
+                <tr>
+                  <th>Room Unit</th>
+                  <th>Hardware / IP</th>
+                  <th>State</th>
+                  <th>Target</th>
+                  <th>Indoor / Hum</th>
+                  <th>Outdoor</th>
+                  <th>Compressor</th>
+                  <th>Runtime</th>
+                  <th>Diagnostics</th>
+                </tr>
+              </thead>
+              <tbody id="dashboard-table-body">
+                <!-- Rendered dynamically by JS -->
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -381,6 +426,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=2"></script>
+  <script src="app.js?v=3"></script>
 </body>
 </html>

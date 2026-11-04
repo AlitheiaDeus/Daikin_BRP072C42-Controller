@@ -443,10 +443,38 @@ class DaikinController:
 
 
 class DaikinDeviceManager:
-    def __init__(self, config_path="daikin_config.json"):
+    def __init__(self, config_path="daikin_config.json", cache_path="devices_cache.json"):
         self.config_path = config_path
+        self.cache_path = cache_path
         self.devices = {}
         self.load_config()
+        self.load_cache()
+
+    def load_cache(self):
+        """Restore last known state from flash cache so temperatures are instant on boot."""
+        try:
+            with open(self.cache_path, "r") as f:
+                cached = json.load(f)
+                for dev_id, state in cached.items():
+                    if dev_id in self.devices and state:
+                        self.devices[dev_id]._last_state = state
+                        if "raw_ctrl" in state:
+                            self.devices[dev_id]._last_ctrl = state.get("raw_ctrl", {})
+        except Exception:
+            pass
+
+    def save_cache(self):
+        """Persist current states to flash so subsequent reboots are instant."""
+        try:
+            cache_data = {}
+            for dev_id, dev in self.devices.items():
+                if dev._last_state:
+                    cache_data[dev_id] = dev._last_state
+            if cache_data:
+                with open(self.cache_path, "w") as f:
+                    json.dump(cache_data, f)
+        except Exception:
+            pass
 
     def load_config(self):
         try:
