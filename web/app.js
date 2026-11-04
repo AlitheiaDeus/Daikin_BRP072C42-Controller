@@ -126,7 +126,7 @@ function startCountdown() {
       syncCountdown = SYNC_INTERVAL_SEC;
       if (currentView === "overview") {
         fetchDevices(true);
-      } else if (activeDeviceId) {
+      } else if (activeDeviceId && currentView === "detail") {
         loadDeviceState(activeDeviceId, true);
       }
     } else {
@@ -196,6 +196,8 @@ function openDeviceDetail(deviceId) {
 
 // Blank live fields immediately on tab switch so previous AC values never linger
 function blankActiveFields(deviceMeta) {
+  if (currentView !== "detail") return;
+
   activeDeviceName.textContent = deviceMeta.name || deviceMeta.id;
   activeDeviceIp.textContent = `${deviceMeta.ip} • Model: aircon`;
 
@@ -254,6 +256,7 @@ async function fetchDevices(silent = false) {
     console.warn("Init error:", err);
   } finally {
     loadingState.classList.add("hidden");
+    startCountdown();
   }
 }
 
@@ -400,13 +403,6 @@ function renderOverview() {
       </div>
     `;
 
-    // Click whole card body to navigate to detailed controls
-    card.addEventListener("click", (e) => {
-      // Don't navigate if clicking on buttons or inputs
-      if (e.target.closest("button") || e.target.closest("input")) return;
-      openDeviceDetail(d.id);
-    });
-
     // Rename button
     const renameBtn = card.querySelector(".btn-rename-card");
     if (renameBtn) {
@@ -442,7 +438,7 @@ function renderOverview() {
       });
     }
 
-    // Detail button
+    // Detail button (Explicit tap required to navigate to detailed controls)
     const detailBtn = card.querySelector(".glance-btn-detail");
     if (detailBtn) {
       detailBtn.addEventListener("click", (e) => {
@@ -467,7 +463,7 @@ async function toggleDevicePower(deviceId) {
   renderOverview();
   renderTabs();
 
-  if (deviceId === activeDeviceId) {
+  if (deviceId === activeDeviceId && currentView === "detail") {
     applyOptimisticPower(newPower);
   }
 
@@ -505,7 +501,7 @@ function nudgeDeviceTemp(deviceId, delta) {
   renderOverview();
   renderTabs();
 
-  if (deviceId === activeDeviceId) {
+  if (deviceId === activeDeviceId && currentView === "detail") {
     applyOptimisticTemp(nextTemp);
   }
 
@@ -601,7 +597,7 @@ async function loadDeviceState(id, isBackground = false, forceRefresh = false) {
   abortController = new AbortController();
   const currentRequestId = ++activeRequestId;
 
-  if (!isBackground) {
+  if (!isBackground && currentView === "detail") {
     isBusy = true;
     setStatus("busy", "Syncing unit...");
     blankActiveFields(devices.find(d => d.id === id) || { id, ip: "..." });
@@ -617,17 +613,30 @@ async function loadDeviceState(id, isBackground = false, forceRefresh = false) {
       return;
     }
 
-    activeDeviceState = state;
-    if (!state.configured) {
-      renderUnconfiguredView(state);
-    } else {
-      renderActiveView(state);
-      isBusy = false;
-      startCountdown();
+    // Always update cached device state in devices list
+    const d = devices.find(dev => dev.id === state.id);
+    if (d) {
+      Object.assign(d, state);
     }
+
+    activeDeviceState = state;
+
+    if (currentView === "detail") {
+      if (!state.configured) {
+        renderUnconfiguredView(state);
+      } else {
+        renderActiveView(state);
+      }
+    } else if (currentView === "overview") {
+      renderOverview();
+      renderTabs();
+    }
+
+    isBusy = false;
+    startCountdown();
   } catch (err) {
     if (err.name === "AbortError") return;
-    if (currentRequestId === activeRequestId) {
+    if (currentRequestId === activeRequestId && currentView === "detail") {
       setStatus("error", "Unit Offline / Unreachable");
       labelModeSummary.textContent = "UNIT UNREACHABLE";
       console.warn(`[${id}] Sync error:`, err);
@@ -641,9 +650,11 @@ async function loadDeviceState(id, isBackground = false, forceRefresh = false) {
 
 // Render Unconfigured State
 function renderUnconfiguredView(state) {
-  activeDeviceView.classList.add("hidden");
-  overviewView.classList.add("hidden");
-  unconfiguredView.classList.remove("hidden");
+  if (currentView === "detail") {
+    activeDeviceView.classList.add("hidden");
+    overviewView.classList.add("hidden");
+    unconfiguredView.classList.remove("hidden");
+  }
 
   setupDeviceTitle.textContent = `${state.name} Not Configured`;
   setupIdPreview.textContent = state.id;
@@ -652,9 +663,12 @@ function renderUnconfiguredView(state) {
 
 // Render Active State
 function renderActiveView(state) {
-  unconfiguredView.classList.add("hidden");
-  overviewView.classList.add("hidden");
-  activeDeviceView.classList.remove("hidden");
+  // Guard: NEVER hide overview or switch to activeDeviceView unless currentView is actually "detail"
+  if (currentView === "detail") {
+    unconfiguredView.classList.add("hidden");
+    overviewView.classList.add("hidden");
+    activeDeviceView.classList.remove("hidden");
+  }
 
   activeDeviceName.textContent = state.name;
   activeDeviceIp.textContent = `${state.ip} • Model: ${state.model_type || "aircon"}`;
@@ -752,9 +766,9 @@ function renderActiveView(state) {
   }
 
   // Also update corresponding device in devices cache
-  const d = devices.find(dev => dev.id === state.id);
-  if (d) {
-    Object.assign(d, state);
+  const dev = devices.find(devItem => devItem.id === state.id);
+  if (dev) {
+    Object.assign(dev, state);
   }
 }
 
@@ -860,7 +874,11 @@ async function flushPendingPatch() {
     lastConfirmedState = JSON.parse(JSON.stringify(updated));
 
     if (Object.keys(pendingPatch).length === 0) {
-      renderActiveView(updated);
+      if (currentView === "detail") {
+        renderActiveView(updated);
+      } else if (currentView === "overview") {
+        renderOverview();
+      }
       showToast("Command applied to AC");
       startCountdown();
     } else {
@@ -872,7 +890,9 @@ async function flushPendingPatch() {
     setStatus("error", "Command failed");
     if (lastConfirmedState) {
       activeDeviceState = JSON.parse(JSON.stringify(lastConfirmedState));
-      renderActiveView(lastConfirmedState);
+      if (currentView === "detail") {
+        renderActiveView(lastConfirmedState);
+      }
     }
     pendingPatch = {};
     startCountdown();
@@ -1266,7 +1286,7 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && !isUpdating) {
     if (currentView === "overview") {
       fetchDevices(true);
-    } else if (activeDeviceId) {
+    } else if (activeDeviceId && currentView === "detail") {
       loadDeviceState(activeDeviceId, true);
     }
   }
