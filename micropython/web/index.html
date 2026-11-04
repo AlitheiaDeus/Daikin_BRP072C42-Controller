@@ -67,18 +67,18 @@
 
     <!-- Main Content Area -->
     <main class="dashboard-content" id="dashboard-content">
-      <!-- Loading Skeleton -->
-      <div class="loading-state" id="loading-state">
+      <!-- Loading Skeleton (Hidden by default, instant cache render) -->
+      <div class="loading-state hidden" id="loading-state">
         <div class="spinner"></div>
         <p>Connecting to Daikin Wi-Fi unit...</p>
       </div>
 
       <!-- Overview / Landing View: All ACs at a glance -->
-      <div id="overview-view" class="view-panel hidden">
+      <div id="overview-view" class="view-panel">
         <div class="overview-header-bar">
           <div class="overview-stats">
             <h2 class="overview-title">All Climate Units</h2>
-            <p class="overview-subtitle" id="overview-subtitle">Loading units...</p>
+            <p class="overview-subtitle" id="overview-subtitle">All units at a glance</p>
           </div>
           <div class="overview-actions">
             <button id="btn-all-off" class="pill-btn pill-btn-danger" title="Turn all running units off">

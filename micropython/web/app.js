@@ -1,7 +1,25 @@
 // Daikin Local Climate Hub Client
+
+// 1. Instant Cache Restoration from localStorage (0ms Stale-While-Revalidate)
 let devices = [];
+try {
+  const cachedDevs = localStorage.getItem("daikin_devices_cache");
+  if (cachedDevs) devices = JSON.parse(cachedDevs);
+} catch (e) {}
+
 let activeDeviceId = null;
+try {
+  activeDeviceId = localStorage.getItem("daikin_active_device_id") || (devices[0]?.id || null);
+} catch (e) {}
+
 let activeDeviceState = null;
+try {
+  if (activeDeviceId) {
+    const cachedState = localStorage.getItem("daikin_active_state_" + activeDeviceId);
+    if (cachedState) activeDeviceState = JSON.parse(cachedState);
+  }
+} catch (e) {}
+
 let isUpdating = false;
 
 // View Mode: "overview" (all units at a glance) or "detail" (single unit controls)
@@ -191,12 +209,19 @@ function setView(viewMode) {
 
 function openDeviceDetail(deviceId) {
   activeDeviceId = deviceId;
+  try {
+    localStorage.setItem("daikin_active_device_id", deviceId);
+  } catch (e) {}
   setView("detail");
 }
 
-// Blank live fields immediately on tab switch so previous AC values never linger
+// Blank live fields immediately on tab switch ONLY when no state exists
 function blankActiveFields(deviceMeta) {
   if (currentView !== "detail") return;
+  if (activeDeviceState && activeDeviceState.id === deviceMeta.id) {
+    // Preserve existing known state to avoid flashing '--'
+    return;
+  }
 
   activeDeviceName.textContent = deviceMeta.name || deviceMeta.id;
   activeDeviceIp.textContent = `${deviceMeta.ip} • Model: aircon`;
@@ -224,17 +249,30 @@ function blankActiveFields(deviceMeta) {
   if (hwClock) hwClock.textContent = "--";
 }
 
-// Fetch all devices (lightweight instant init from server cache, no AC pinging)
-async function fetchDevices(silent = false) {
+// Fetch all devices (Silent background revalidation, 0ms render from cache)
+async function fetchDevices(silent = true) {
+  // Only show loading spinner on very first visit if zero cached devices exist
+  if (devices.length === 0 && loadingState) {
+    loadingState.classList.remove("hidden");
+  }
+
   try {
     const res = await fetch("/api/devices");
     if (!res.ok) throw new Error("Failed to load device list");
     const data = await res.json();
     devices = data.devices || [];
 
+    // Cache devices in localStorage
+    try {
+      localStorage.setItem("daikin_devices_cache", JSON.stringify(devices));
+    } catch (e) {}
+
     if (!activeDeviceId || !devices.find(d => d.id === activeDeviceId)) {
       const firstConfigured = devices.find(d => d.configured);
       activeDeviceId = firstConfigured ? firstConfigured.id : (devices[0]?.id || null);
+      if (activeDeviceId) {
+        try { localStorage.setItem("daikin_active_device_id", activeDeviceId); } catch (e) {}
+      }
     }
 
     renderTabs();
@@ -246,7 +284,7 @@ async function fetchDevices(silent = false) {
       unconfiguredView.classList.add("hidden");
     } else {
       if (activeDeviceId) {
-        switchTab(activeDeviceId);
+        loadDeviceState(activeDeviceId, true);
       } else {
         renderUnconfiguredView({ name: "No AC Units Paired", ip: "Scan your Wi-Fi below to get started" });
       }
@@ -255,7 +293,7 @@ async function fetchDevices(silent = false) {
     if (!silent) setStatus("error", "Server Disconnected");
     console.warn("Init error:", err);
   } finally {
-    loadingState.classList.add("hidden");
+    if (loadingState) loadingState.classList.add("hidden");
     startCountdown();
   }
 }
@@ -478,6 +516,7 @@ async function toggleDevicePower(deviceId) {
     const updated = await res.json();
     if (updated.error) throw new Error(updated.error);
     Object.assign(dev, updated);
+    try { localStorage.setItem("daikin_devices_cache", JSON.stringify(devices)); } catch (e) {}
     renderOverview();
     renderTabs();
     showToast(`${dev.name || dev.id}: ${newPower ? "ON" : "OFF"}`);
@@ -521,6 +560,7 @@ function nudgeDeviceTemp(deviceId, delta) {
       const updated = await res.json();
       if (updated.error) throw new Error(updated.error);
       Object.assign(dev, updated);
+      try { localStorage.setItem("daikin_devices_cache", JSON.stringify(devices)); } catch (e) {}
       renderOverview();
       renderTabs();
     } catch (err) {
@@ -565,6 +605,7 @@ function switchTab(newDeviceId) {
   pendingPatch = {};
   stopCountdown();
   activeDeviceId = newDeviceId;
+  try { localStorage.setItem("daikin_active_device_id", newDeviceId); } catch (e) {}
 
   // Update tab highlights
   document.querySelectorAll(".device-tab").forEach(tab => {
@@ -617,9 +658,14 @@ async function loadDeviceState(id, isBackground = false, forceRefresh = false) {
     const d = devices.find(dev => dev.id === state.id);
     if (d) {
       Object.assign(d, state);
+      try { localStorage.setItem("daikin_devices_cache", JSON.stringify(devices)); } catch (e) {}
     }
 
     activeDeviceState = state;
+    try {
+      localStorage.setItem("daikin_active_state_" + id, JSON.stringify(state));
+      localStorage.setItem("daikin_active_device_id", id);
+    } catch (e) {}
 
     if (currentView === "detail") {
       if (!state.configured) {
@@ -950,6 +996,8 @@ async function saveRename() {
     if (!res.ok || data.error) throw new Error(data.error || "Save failed");
 
     dev.name = newName;
+    try { localStorage.setItem("daikin_devices_cache", JSON.stringify(devices)); } catch (e) {}
+
     if (activeDeviceId === dev.id) {
       activeDeviceName.textContent = newName;
     }
@@ -1292,5 +1340,20 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
-// Init on load
-fetchDevices();
+// 2. Instant Render at boot time (0ms from Cache before network fetch)
+if (devices && devices.length > 0) {
+  renderTabs();
+  if (currentView === "overview") {
+    renderOverview();
+    overviewView.classList.remove("hidden");
+    activeDeviceView.classList.add("hidden");
+    unconfiguredView.classList.add("hidden");
+  } else if (activeDeviceState) {
+    overviewView.classList.add("hidden");
+    renderActiveView(activeDeviceState);
+  }
+  if (loadingState) loadingState.classList.add("hidden");
+}
+
+// 3. Silent background fetch from server RAM cache to reconcile fresh state
+fetchDevices(true);
