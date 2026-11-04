@@ -1,5 +1,8 @@
 # Private Daikin hardware keys & UUIDs
 daikin_config.json
+devices_cache.json
+*devices_cache*.json
+micropython/devices_cache.json
 
 # Python bytecode & cache
 __pycache__/
@@ -18,5 +21,20 @@ Thumbs.db
 micropython/daikin_config.json
 *wifi_config*.json
 
-# Local deployment scripts
+# --- Machine-Specific Launchers & Overrides ---
 deploy_ota.ps1
+run_local.ps1
+*.local.env
+.env
+
+# --- Standard Agentic Hygiene & Privacy (Added by git_sanitize_check) ---
+# --- Agent & Developer Scratchpads ---
+internal/
+scratch/
+ideas/
+
+# --- Runtime Caches & Build Artifacts ---
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
