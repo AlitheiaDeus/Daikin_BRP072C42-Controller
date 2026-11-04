@@ -17,3 +17,6 @@ Thumbs.db
 # MicroPython secrets
 micropython/daikin_config.json
 *wifi_config*.json
+
+# Local deployment scripts
+deploy_ota.ps1
