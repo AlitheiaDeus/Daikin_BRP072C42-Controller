@@ -142,11 +142,7 @@ function startCountdown() {
     syncCountdown--;
     if (syncCountdown <= 0) {
       syncCountdown = SYNC_INTERVAL_SEC;
-      if (currentView === "overview") {
-        fetchDevices(true);
-      } else if (activeDeviceId && currentView === "detail") {
-        loadDeviceState(activeDeviceId, true);
-      }
+      fetchDevices(true);
     } else {
       setStatus("online", `Live (Sync in ${syncCountdown}s)`);
     }
@@ -283,8 +279,12 @@ async function fetchDevices(silent = true) {
       activeDeviceView.classList.add("hidden");
       unconfiguredView.classList.add("hidden");
     } else {
-      if (activeDeviceId) {
-        loadDeviceState(activeDeviceId, true);
+      const activeDev = devices.find(d => d.id === activeDeviceId);
+      if (activeDev && activeDev.configured) {
+        activeDeviceState = activeDev;
+        renderActiveView(activeDev);
+      } else if (activeDev && !activeDev.configured) {
+        renderUnconfiguredView(activeDev);
       } else {
         renderUnconfiguredView({ name: "No AC Units Paired", ip: "Scan your Wi-Fi below to get started" });
       }
@@ -621,13 +621,14 @@ function switchTab(newDeviceId) {
     return;
   }
 
-  // Switch view panel and load from server RAM cache silently (<2ms)
+  // Switch view panel and render immediately from devices RAM cache (0ms)
   activeDeviceView.classList.remove("hidden");
   unconfiguredView.classList.add("hidden");
   overviewView.classList.add("hidden");
 
-  // Fetch state from RAM cache immediately
-  loadDeviceState(newDeviceId, true);
+  activeDeviceState = devMeta;
+  renderActiveView(devMeta);
+  startCountdown();
 }
 
 // Load single device state on-demand with cancellation of older requests
@@ -1140,15 +1141,10 @@ if (diagnosticsDrawer) {
   });
 }
 
-// Refresh button (forces live telemetry read from AC hardware)
+// Refresh button (fetches latest interval data from XIAO hub RAM cache)
 btnRefresh.addEventListener("click", () => {
-  if (currentView === "overview") {
-    showToast("Refreshing all units...");
-    fetchDevices(false);
-  } else if (activeDeviceId) {
-    showToast("Refreshing live from AC...");
-    loadDeviceState(activeDeviceId, false, true);
-  }
+  showToast("Updating from hub cache...");
+  fetchDevices(false);
 });
 
 // Discovery & Key Management Modal Elements

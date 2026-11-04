@@ -176,6 +176,37 @@ class DaikinController:
     def get_cached_state(self):
         return self._last_state
 
+    def get_default_state(self):
+        return {
+            "id": self.device_id,
+            "name": self.name or self.device_id,
+            "adapter_name": "",
+            "ip": self.ip,
+            "configured": self.is_configured,
+            "status": "online" if self.is_configured else "unconfigured",
+            "supported_modes": ["cool", "dry", "fan"],
+            "min_temp": 18.0,
+            "max_temp": 32.0,
+            "supports_swing": True,
+            "fan_steps": 5,
+            "power": False,
+            "mode": "cool",
+            "mode_raw": "3",
+            "target_temp": 25.0,
+            "indoor_temp": None,
+            "outdoor_temp": None,
+            "humidity": None,
+            "compressor_freq": 0,
+            "fan_rate": "A",
+            "fan_dir": "0",
+            "today_runtime_mins": 0,
+            "device_clock": "",
+            "mac": "",
+            "firmware": "",
+            "model_type": "aircon",
+            "err": "0",
+        }
+
     def _parse_response(self, text):
         result = {}
         for token in text.strip().split(","):
@@ -254,16 +285,6 @@ class DaikinController:
             }
 
         self._last_ctrl = dict(ctrl)
-
-        now = time.time()
-        if now - self._last_heavy_check > 60:
-            self._last_heavy_check = now
-            week_pwr = self.query_endpoint("/aircon/get_week_power")
-            if week_pwr.get("ret") == "OK":
-                self._last_runtime = int(week_pwr.get("today_runtime", "0"))
-            dt = self.query_endpoint("/common/get_datetime")
-            if dt.get("ret") == "OK":
-                self._last_clock = dt.get("cur", "")
 
         raw_name = self._basic_cache.get("name") if self._basic_cache else None
         adapter_name = unquote(raw_name) if raw_name else ""
@@ -488,31 +509,14 @@ class DaikinDeviceManager:
         for dev in self.devices.values():
             cached = dev.get_cached_state()
             if cached:
-                summaries.append({
-                    "id": dev.device_id,
-                    "name": dev.name,
-                    "ip": dev.ip,
-                    "configured": dev.is_configured,
-                    "status": cached.get("status", "online"),
-                    "power": cached.get("power", False),
-                    "mode": cached.get("mode", "cool"),
-                    "target_temp": cached.get("target_temp", 25.0),
-                    "indoor_temp": cached.get("indoor_temp"),
-                    "error": cached.get("error")
-                })
+                item = dict(cached)
+                item["id"] = dev.device_id
+                item["name"] = dev.name or cached.get("name") or dev.device_id
+                item["ip"] = dev.ip
+                item["configured"] = dev.is_configured
+                summaries.append(item)
             else:
-                summaries.append({
-                    "id": dev.device_id,
-                    "name": dev.name,
-                    "ip": dev.ip,
-                    "configured": dev.is_configured,
-                    "status": "online" if dev.is_configured else "unconfigured",
-                    "power": False,
-                    "mode": "cool",
-                    "target_temp": 25.0,
-                    "indoor_temp": None,
-                    "error": None
-                })
+                summaries.append(dev.get_default_state())
         return summaries
 
     def upsert_device(self, dev_id=None, name="", ip="", key=""):

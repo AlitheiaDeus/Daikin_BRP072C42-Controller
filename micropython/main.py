@@ -170,25 +170,13 @@ async def handle_client(reader, writer):
                     await send_json(writer, telemetry)
                     return
 
-                force_refresh = "refresh=1" in query_str or "refresh=true" in query_str
-                try:
-                    if not force_refresh:
-                        cached = device.get_cached_state()
-                        if cached:
-                            await send_json(writer, cached)
-                            return
-                    await send_json(writer, device.get_full_state())
+                # GET is ALWAYS served from RAM cache - zero waiting for AC network!
+                cached = device.get_cached_state()
+                if cached:
+                    await send_json(writer, cached)
                     return
-                except Exception as e:
-                    await send_json(writer, {
-                        "id": dev_id,
-                        "name": device.name,
-                        "ip": device.ip,
-                        "configured": device.is_configured,
-                        "status": "offline",
-                        "error": str(e)
-                    }, 500)
-                    return
+                await send_json(writer, device.get_default_state())
+                return
 
         # API: Control Daikin Unit
         if method == "POST" and path.startswith("/api/devices/") and path.endswith("/control"):
@@ -305,21 +293,24 @@ async def handle_client(reader, writer):
 
 
 async def background_poller():
-    """Background task polling all Daikin AC units with gentle pacing."""
-    await asyncio.sleep(5)
+    """Background task continuously polling all Daikin AC units every 15s into RAM cache."""
+    import time
+    # Polling starts immediately on boot so cache is warm right away
     while True:
-        try:
-            for ctrl in list(manager.devices.values()):
-                if ctrl.is_configured:
-                    try:
-                        ctrl.get_full_state()
-                    except Exception as exc:
-                        print(f"[{ctrl.name}] Background poll error: {exc}")
-                    await asyncio.sleep(2.0)
-                    gc.collect()
-        except Exception as exc:
-            print(f"[Poller] Background cycle error: {exc}")
-        await asyncio.sleep(15)
+        t0 = time.time()
+        for ctrl in list(manager.devices.values()):
+            if ctrl.is_configured:
+                try:
+                    ctrl.get_full_state()
+                except Exception as exc:
+                    print(f"[{ctrl.name}] Poll error: {exc}")
+                # Yield to uasyncio between units so incoming web requests are served in <5ms
+                await asyncio.sleep_ms(50)
+                gc.collect()
+
+        elapsed = time.time() - t0
+        sleep_time = max(1.0, 15.0 - elapsed)
+        await asyncio.sleep(sleep_time)
 
 
 async def main():

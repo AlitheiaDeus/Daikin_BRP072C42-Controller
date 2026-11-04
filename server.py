@@ -93,22 +93,11 @@ class DaikinWebHandler(BaseHTTPRequestHandler):
                     }
                     return self._send_json(telemetry)
                 
-                force_refresh = parse_qs(parsed.query).get("refresh", ["0"])[0] in ("1", "true")
-                try:
-                    if not force_refresh:
-                        cached = device.get_cached_state()
-                        if cached:
-                            return self._send_json(cached)
-                    return self._send_json(device.get_full_state())
-                except Exception as e:
-                    return self._send_json({
-                        "id": dev_id,
-                        "name": device.name,
-                        "ip": device.ip,
-                        "configured": device.is_configured,
-                        "status": "offline",
-                        "error": str(e)
-                    }, 500)
+                # GET is ALWAYS served from RAM cache - zero waiting for AC network!
+                cached = device.get_cached_state()
+                if cached:
+                    return self._send_json(cached)
+                return self._send_json(device.get_default_state())
 
         # Static files
         if path == "/" or path == "":

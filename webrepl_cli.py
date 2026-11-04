@@ -297,15 +297,12 @@ def main():
         import getpass
         passwd = getpass.getpass()
 
-    if len(sys.argv) > 2:
-        if ":" in sys.argv[1] and ":" in sys.argv[2]:
-            error("Operations on 2 remote files are not supported")
-        if ":" not in sys.argv[1] and ":" not in sys.argv[2]:
-            error("One remote file is required")
-
     if len(sys.argv) == 2:
         op = "repl"
-        host, port, _ = parse_remote(sys.argv[1] + ":")
+        host, port, _ = parse_remote(sys.argv[1] + (":" if ":" not in sys.argv[1] else ""))
+    elif len(sys.argv) == 3 and sys.argv[2].lower() in ("reboot", "reset"):
+        op = "reboot"
+        host, port, _ = parse_remote(sys.argv[1] + (":" if ":" not in sys.argv[1] else ""))
     elif ":" in sys.argv[1]:
         op = "get"
         host, port, src_file = parse_remote(sys.argv[1])
@@ -313,13 +310,15 @@ def main():
         if os.path.isdir(dst_file):
             basename = src_file.rsplit("/", 1)[-1]
             dst_file += "/" + basename
-    else:
+    elif len(sys.argv) > 2 and ":" in sys.argv[2]:
         op = "put"
         host, port, dst_file = parse_remote(sys.argv[2])
         src_file = sys.argv[1]
         if dst_file[-1] == "/":
             basename = src_file.rsplit("/", 1)[-1]
             dst_file += basename
+    else:
+        error("Invalid arguments or missing remote file with ':'")
 
     if True:
         print("op:%s, host:%s, port:%d, passwd:%s." % (op, host, port, passwd))
@@ -345,6 +344,12 @@ def main():
 
     if op == "repl":
         do_repl(ws)
+    elif op == "reboot":
+        import time
+        print("[*] Sending soft reset to MicroPython...")
+        ws.write(b"\r\x03\x03import machine; machine.reset()\r\n", frame=WEBREPL_FRAME_TXT)
+        time.sleep(1)
+        print("[+] Reset signal transmitted.")
     elif op == "get":
         get_file(ws, dst_file, src_file)
     elif op == "put":

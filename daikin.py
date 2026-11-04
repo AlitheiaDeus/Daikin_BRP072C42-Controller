@@ -78,6 +78,37 @@ class DaikinController:
     def get_cached_state(self) -> Optional[dict]:
         return self._last_state
 
+    def get_default_state(self) -> dict:
+        return {
+            "id": self.device_id,
+            "name": self.name or self.device_id,
+            "adapter_name": "",
+            "ip": self.ip,
+            "configured": self.is_configured,
+            "status": "online" if self.is_configured else "unconfigured",
+            "supported_modes": ["cool", "dry", "fan"],
+            "min_temp": 18.0,
+            "max_temp": 32.0,
+            "supports_swing": True,
+            "fan_steps": 5,
+            "power": False,
+            "mode": "cool",
+            "mode_raw": "3",
+            "target_temp": 25.0,
+            "indoor_temp": None,
+            "outdoor_temp": None,
+            "humidity": None,
+            "compressor_freq": 0,
+            "fan_rate": "A",
+            "fan_dir": "0",
+            "today_runtime_mins": 0,
+            "device_clock": "",
+            "mac": "",
+            "firmware": "",
+            "model_type": "aircon",
+            "err": "0",
+        }
+
     @property
     def is_configured(self) -> bool:
         if not self.ip or "XXX" in self.ip or self.ip == "0.0.0.0":
@@ -462,19 +493,16 @@ class DaikinDeviceManager:
     def get_summaries(self) -> List[dict]:
         summaries = []
         for ctrl in self.devices.values():
-            item = {
-                "id": ctrl.device_id,
-                "name": ctrl.name,
-                "ip": ctrl.ip,
-                "configured": ctrl.is_configured,
-            }
-            if ctrl._last_state:
-                item["power"] = ctrl._last_state.get("power", False)
-                item["target_temp"] = ctrl._last_state.get("target_temp")
-                item["indoor_temp"] = ctrl._last_state.get("indoor_temp")
-                item["mode"] = ctrl._last_state.get("mode", "cool")
-                item["status"] = ctrl._last_state.get("status", "online")
-            summaries.append(item)
+            cached = ctrl.get_cached_state()
+            if cached:
+                item = dict(cached)
+                item["id"] = ctrl.device_id
+                item["name"] = ctrl.name or cached.get("name") or ctrl.device_id
+                item["ip"] = ctrl.ip
+                item["configured"] = ctrl.is_configured
+                summaries.append(item)
+            else:
+                summaries.append(ctrl.get_default_state())
         return summaries
 
     def poll_all_parallel(self) -> List[dict]:
