@@ -1108,3 +1108,543 @@ body {
   display: flex;
   justify-content: center;
 }
+
+
+/* ==========================================================================
+   Overview Landing Page: All ACs At-a-Glance (Mom-Friendly Mobile First)
+   ========================================================================== */
+
+.overview-header-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  gap: 16px;
+}
+
+.overview-title {
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--text-main);
+}
+
+.overview-subtitle {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.pill-btn-danger {
+  color: var(--accent-danger);
+  border-color: rgba(239, 68, 68, 0.4);
+  background: rgba(239, 68, 68, 0.1);
+}
+
+.pill-btn-danger:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: var(--accent-danger);
+  box-shadow: 0 0 15px rgba(239, 68, 68, 0.3);
+}
+
+/* Overview Cards Grid */
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 20px;
+}
+
+.glance-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  position: relative;
+  overflow: hidden;
+  backdrop-filter: blur(20px);
+  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.glance-card:hover {
+  background: var(--bg-card-hover);
+  border-color: rgba(0, 229, 255, 0.3);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+}
+
+.glance-card.is-on {
+  border-color: rgba(0, 229, 255, 0.35);
+  box-shadow: 0 8px 32px rgba(0, 229, 255, 0.08);
+}
+
+.glance-card.is-on::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue));
+}
+
+.glance-card.is-off {
+  opacity: 0.85;
+}
+
+.glance-card.is-off:hover {
+  opacity: 1;
+}
+
+.glance-card-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.glance-title-area {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.glance-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.glance-room-name {
+  font-size: 1.22rem;
+  font-weight: 700;
+  color: #fff;
+  letter-spacing: -0.01em;
+}
+
+.btn-rename {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-fast);
+}
+
+.btn-rename svg {
+  width: 15px;
+  height: 15px;
+}
+
+.btn-rename:hover {
+  color: var(--accent-cyan);
+  background: rgba(0, 229, 255, 0.12);
+}
+
+.glance-ip-label {
+  font-size: 0.76rem;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.glance-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.glance-badge.badge-cool {
+  background: rgba(0, 229, 255, 0.15);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(0, 229, 255, 0.3);
+}
+
+.glance-badge.badge-heat {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--accent-amber);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.glance-badge.badge-off {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  border: 1px solid var(--border-subtle);
+}
+
+/* Card Body: Power & Temp Hero */
+.glance-body {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: rgba(8, 12, 22, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+}
+
+/* Big Tactile Glance Power Button */
+.glance-power-btn {
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  border: 2px solid var(--border-subtle);
+  background: rgba(14, 20, 32, 0.8);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.glance-power-btn svg {
+  width: 22px;
+  height: 22px;
+}
+
+.glance-power-label {
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.glance-power-btn.is-on {
+  background: linear-gradient(135deg, rgba(0, 229, 255, 0.25), rgba(59, 130, 246, 0.25));
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+  box-shadow: 0 0 20px var(--glow-cyan);
+}
+
+.glance-power-btn:hover {
+  transform: scale(1.05);
+}
+
+.glance-power-btn:active {
+  transform: scale(0.96);
+}
+
+/* Glance Temp & Steppers Group */
+.glance-temp-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.glance-temp-block {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.glance-temp-label {
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.glance-temp-value {
+  font-size: 1.75rem;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.glance-temp-unit {
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--accent-cyan);
+}
+
+.glance-stepper-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.glance-stepper-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.glance-stepper-btn:hover {
+  background: rgba(0, 229, 255, 0.15);
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+.glance-stepper-btn:active {
+  transform: scale(0.92);
+}
+
+.glance-stepper-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+/* Card Footer */
+.glance-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-top: 6px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.glance-meta-text {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.glance-btn-detail {
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  padding: 5px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--accent-cyan);
+  cursor: pointer;
+  transition: var(--transition-fast);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.glance-btn-detail:hover {
+  background: rgba(0, 229, 255, 0.15);
+  border-color: var(--accent-cyan);
+}
+
+/* ==========================================================================
+   Detail View Navigation & Decluttered Layout
+   ========================================================================== */
+
+.detail-nav-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.btn-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-full);
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.btn-back:hover {
+  background: rgba(0, 229, 255, 0.15);
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+.back-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.detail-nav-hint {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.title-with-rename {
+  display: flex;
+  flex-direction: column;
+}
+
+.name-edit-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-button-sm {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition-fast);
+}
+
+.icon-button-sm:hover {
+  background: rgba(0, 229, 255, 0.15);
+  color: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+}
+
+/* Primary Environmental Sensors */
+.primary-sensors-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.primary-stat {
+  background: rgba(10, 16, 28, 0.7);
+  border: 1px solid rgba(0, 229, 255, 0.2);
+  padding: 16px;
+}
+
+/* Collapsible Diagnostics Accordion */
+.diagnostics-drawer {
+  background: rgba(8, 12, 20, 0.6);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  margin-top: 10px;
+}
+
+.diagnostics-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  cursor: pointer;
+  user-select: none;
+  list-style: none;
+  transition: background var(--transition-fast);
+}
+
+.diagnostics-summary::-webkit-details-marker {
+  display: none;
+}
+
+.diagnostics-summary:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.summary-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.summary-pill {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+}
+
+.diagnostics-drawer[open] .summary-pill {
+  background: rgba(0, 229, 255, 0.12);
+  color: var(--accent-cyan);
+  border-color: rgba(0, 229, 255, 0.3);
+}
+
+.diagnostics-body {
+  padding: 14px 18px 18px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Rename Modal Specifics */
+.modal-card-sm {
+  max-width: 440px;
+}
+
+.modal-body-padded {
+  padding: 24px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.input-label {
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.input-hint {
+  font-size: 0.76rem;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.modal-footer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 16px 28px 24px;
+}
+
+/* Responsive Tweaks for Mobile */
+@media (max-width: 640px) {
+  .overview-grid {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
+  .glance-card {
+    padding: 18px 16px;
+  }
+  .glance-body {
+    padding: 12px 14px;
+  }
+  .glance-power-btn {
+    width: 52px;
+    height: 52px;
+  }
+  .glance-temp-value {
+    font-size: 1.65rem;
+  }
+  .primary-sensors-row {
+    grid-template-columns: 1fr;
+  }
+}

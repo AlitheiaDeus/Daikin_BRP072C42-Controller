@@ -4,11 +4,19 @@ let activeDeviceId = null;
 let activeDeviceState = null;
 let isUpdating = false;
 
-// Optimistic UI & Debounced Command Queue
+// View Mode: "overview" (all units at a glance) or "detail" (single unit controls)
+const isMobileUser = window.innerWidth <= 768 || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+let currentView = isMobileUser ? "overview" : (localStorage.getItem("daikin_view_pref") || "overview");
+
+// Optimistic UI & Debounced Command Queue for Single Unit View
 let pendingPatch = {};
 let debounceTimer = null;
 let inFlightRequest = false;
 let lastConfirmedState = null;
+
+// Per-Device Timers & Patches for Overview Cards
+const deviceTimers = {};
+const devicePending = {};
 
 // Request tracking to prevent out-of-order race conditions
 let activeRequestId = 0;
@@ -19,14 +27,24 @@ const SYNC_INTERVAL_SEC = 15;
 let syncCountdown = SYNC_INTERVAL_SEC;
 let countdownTimer = null;
 
-// Elements
+// DOM Elements
 const deviceTabsContainer = document.getElementById("device-tabs");
 const loadingState = document.getElementById("loading-state");
+const overviewView = document.getElementById("overview-view");
+const overviewGrid = document.getElementById("overview-grid");
+const overviewSubtitle = document.getElementById("overview-subtitle");
 const activeDeviceView = document.getElementById("active-device-view");
 const unconfiguredView = document.getElementById("unconfigured-device-view");
 
+const btnToggleView = document.getElementById("btn-toggle-view");
+const toggleViewIcon = document.getElementById("toggle-view-icon");
+const toggleViewText = document.getElementById("toggle-view-text");
+const btnBackToOverview = document.getElementById("btn-back-to-overview");
+const btnAllOff = document.getElementById("btn-all-off");
+
 const activeDeviceName = document.getElementById("active-device-name");
 const activeDeviceIp = document.getElementById("active-device-ip");
+const btnEditActiveName = document.getElementById("btn-edit-active-name");
 const btnPower = document.getElementById("btn-power");
 const valTargetTemp = document.getElementById("val-target-temp");
 const labelModeSummary = document.getElementById("label-mode-summary");
@@ -41,12 +59,21 @@ const statError = document.getElementById("stat-error");
 const hwMac = document.getElementById("hw-mac");
 const hwFirmware = document.getElementById("hw-firmware");
 const hwClock = document.getElementById("hw-clock");
+const diagnosticsDrawer = document.getElementById("diagnostics-drawer");
 
 const statusText = document.getElementById("status-text");
 const statusPulse = document.querySelector(".status-pulse");
 const btnRefresh = document.getElementById("btn-refresh");
 const toast = document.getElementById("toast");
 const toastMsg = document.getElementById("toast-message");
+
+// Rename Modal Elements
+const modalRename = document.getElementById("modal-rename");
+const btnCloseRenameModal = document.getElementById("btn-close-rename-modal");
+const btnCancelRename = document.getElementById("btn-cancel-rename");
+const btnSaveRename = document.getElementById("btn-save-rename");
+const inputRenameName = document.getElementById("input-rename-name");
+let renameTargetDeviceId = null;
 
 // Setup View Elements
 const setupDeviceTitle = document.getElementById("setup-device-title");
@@ -97,13 +124,74 @@ function startCountdown() {
     syncCountdown--;
     if (syncCountdown <= 0) {
       syncCountdown = SYNC_INTERVAL_SEC;
-      if (activeDeviceId) {
+      if (currentView === "overview") {
+        fetchDevices(true);
+      } else if (activeDeviceId) {
         loadDeviceState(activeDeviceId, true);
       }
     } else {
       setStatus("online", `Live (Sync in ${syncCountdown}s)`);
     }
   }, 1000);
+}
+
+// Format Helpers
+function modeIcon(mode) {
+  switch (mode) {
+    case "cool": return "❄️";
+    case "dry": return "💧";
+    case "fan": return "🌀";
+    case "auto": return "⚡";
+    case "heat": return "☀️";
+    default: return "❄️";
+  }
+}
+
+function fanLabel(rate) {
+  if (rate === "A") return "Auto";
+  if (rate === "B") return "Quiet";
+  return rate ? `Lvl ${rate}` : "Auto";
+}
+
+function swingLabel(dir) {
+  if (dir === "1" || dir === 1) return "Vert";
+  if (dir === "2" || dir === 2) return "Horiz";
+  if (dir === "3" || dir === 3) return "3D";
+  return "Off";
+}
+
+// View Management: Toggle between Overview and Detailed Controls
+function setView(viewMode) {
+  currentView = viewMode;
+  try {
+    localStorage.setItem("daikin_view_pref", viewMode);
+  } catch (e) {}
+
+  if (viewMode === "overview") {
+    overviewView.classList.remove("hidden");
+    activeDeviceView.classList.add("hidden");
+    unconfiguredView.classList.add("hidden");
+
+    if (toggleViewIcon) toggleViewIcon.textContent = "🎛️";
+    if (toggleViewText) toggleViewText.textContent = "Controls";
+    renderOverview();
+  } else {
+    overviewView.classList.add("hidden");
+
+    if (toggleViewIcon) toggleViewIcon.textContent = "🏠";
+    if (toggleViewText) toggleViewText.textContent = "All Units";
+
+    if (activeDeviceId) {
+      switchTab(activeDeviceId);
+    }
+  }
+
+  renderTabs();
+}
+
+function openDeviceDetail(deviceId) {
+  activeDeviceId = deviceId;
+  setView("detail");
 }
 
 // Blank live fields immediately on tab switch so previous AC values never linger
@@ -134,8 +222,8 @@ function blankActiveFields(deviceMeta) {
   if (hwClock) hwClock.textContent = "--";
 }
 
-// Fetch all devices (lightweight instant init, no AC pinging)
-async function fetchDevices() {
+// Fetch all devices (lightweight instant init from server cache, no AC pinging)
+async function fetchDevices(silent = false) {
   try {
     const res = await fetch("/api/devices");
     if (!res.ok) throw new Error("Failed to load device list");
@@ -149,31 +237,53 @@ async function fetchDevices() {
 
     renderTabs();
 
-    if (activeDeviceId) {
-      switchTab(activeDeviceId);
+    if (currentView === "overview") {
+      renderOverview();
+      overviewView.classList.remove("hidden");
+      activeDeviceView.classList.add("hidden");
+      unconfiguredView.classList.add("hidden");
     } else {
-      renderUnconfiguredView({ name: "No AC Units Paired", ip: "Scan your Wi-Fi below to get started" });
+      if (activeDeviceId) {
+        switchTab(activeDeviceId);
+      } else {
+        renderUnconfiguredView({ name: "No AC Units Paired", ip: "Scan your Wi-Fi below to get started" });
+      }
     }
   } catch (err) {
-    setStatus("error", "Server Disconnected");
+    if (!silent) setStatus("error", "Server Disconnected");
     console.warn("Init error:", err);
   } finally {
     loadingState.classList.add("hidden");
   }
 }
 
-// Render Tabs Bar
+// Render Tabs Bar (Includes "All Units" as the first persistent tab)
 function renderTabs() {
   deviceTabsContainer.innerHTML = "";
+
+  // 1. All Units / Overview Tab
+  const overviewTab = document.createElement("button");
+  overviewTab.className = `device-tab ${currentView === "overview" ? "active" : ""}`;
+  overviewTab.id = "tab-overview";
+  const activeCount = devices.filter(d => d.configured && d.power).length;
+  overviewTab.innerHTML = `
+    <span>🏠 All Units</span>
+    <span class="tab-badge">${activeCount > 0 ? `${activeCount} On` : "All Off"}</span>
+  `;
+  overviewTab.addEventListener("click", () => setView("overview"));
+  deviceTabsContainer.appendChild(overviewTab);
+
+  // 2. Individual Device Tabs
   devices.forEach(d => {
     const tab = document.createElement("button");
-    tab.className = `device-tab ${d.id === activeDeviceId ? "active" : ""}`;
+    const isActiveTab = currentView === "detail" && d.id === activeDeviceId;
+    tab.className = `device-tab ${isActiveTab ? "active" : ""}`;
     tab.id = `tab-${d.id}`;
 
     let badgeText = "Setup";
     if (d.configured) {
       if (d.power !== undefined) {
-        badgeText = d.power ? `${d.target_temp || 24}°C` : "OFF";
+        badgeText = d.power ? `${Number(d.target_temp || 24).toFixed(1)}°C` : "OFF";
       } else {
         badgeText = "Ready";
       }
@@ -184,13 +294,269 @@ function renderTabs() {
     `;
 
     tab.addEventListener("click", () => {
-      if (activeDeviceId !== d.id) {
-        switchTab(d.id);
-      }
+      openDeviceDetail(d.id);
     });
 
     deviceTabsContainer.appendChild(tab);
   });
+}
+
+// Render Overview Cards (All ACs at a glance)
+function renderOverview() {
+  if (!overviewGrid) return;
+  overviewGrid.innerHTML = "";
+
+  const configured = devices.filter(d => d.configured);
+  const activeCount = configured.filter(d => d.power).length;
+  if (overviewSubtitle) {
+    overviewSubtitle.textContent = `${configured.length} unit(s) connected • ${activeCount} active`;
+  }
+
+  devices.forEach(d => {
+    const card = document.createElement("div");
+    const isOnline = d.status !== "offline";
+    const isPowerOn = !!d.power && isOnline;
+    card.className = `glance-card ${isPowerOn ? "is-on" : "is-off"}`;
+    card.id = `glance-card-${d.id}`;
+
+    // Mode badge
+    let badgeHtml = "";
+    if (!d.configured) {
+      badgeHtml = `<span class="glance-badge badge-off">Unpaired</span>`;
+    } else if (!isOnline) {
+      badgeHtml = `<span class="glance-badge badge-off">Offline</span>`;
+    } else if (isPowerOn) {
+      const mode = d.mode || "cool";
+      badgeHtml = `<span class="glance-badge ${mode === 'heat' ? 'badge-heat' : 'badge-cool'}">${modeIcon(mode)} ${mode.toUpperCase()}</span>`;
+    } else {
+      badgeHtml = `<span class="glance-badge badge-off">⚪ OFF</span>`;
+    }
+
+    const roomName = d.name || d.id;
+    const targetTempDisplay = d.target_temp !== undefined && d.target_temp !== null ? Number(d.target_temp).toFixed(1) : "24.0";
+    const indoorTempDisplay = d.indoor_temp !== undefined && d.indoor_temp !== null ? Number(d.indoor_temp).toFixed(1) : "--";
+
+    card.innerHTML = `
+      <div class="glance-card-header">
+        <div class="glance-title-area">
+          <div class="glance-title-row">
+            <span class="glance-room-name">${roomName}</span>
+            <button class="btn-rename btn-rename-card" title="Rename this room" data-id="${d.id}">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+              </svg>
+            </button>
+          </div>
+          <span class="glance-ip-label">${d.ip || "No IP assigned"} • BRP072C42</span>
+        </div>
+        ${badgeHtml}
+      </div>
+
+      <div class="glance-body">
+        <button class="glance-power-btn ${isPowerOn ? 'is-on' : ''}" data-id="${d.id}" aria-label="Toggle Power for ${roomName}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/>
+          </svg>
+          <span class="glance-power-label">${isPowerOn ? 'ON' : 'OFF'}</span>
+        </button>
+
+        <div class="glance-temp-group">
+          <div class="glance-temp-block">
+            <span class="glance-temp-label">Room</span>
+            <div class="glance-temp-value">${indoorTempDisplay}<span class="glance-temp-unit">°C</span></div>
+          </div>
+
+          <div class="glance-temp-block">
+            <span class="glance-temp-label">Set</span>
+            <div class="glance-temp-value">${targetTempDisplay}<span class="glance-temp-unit">°C</span></div>
+          </div>
+
+          <div class="glance-stepper-col">
+            <button class="glance-stepper-btn btn-stepper-up" data-id="${d.id}" aria-label="Increase Temp">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+            </button>
+            <button class="glance-stepper-btn btn-stepper-down" data-id="${d.id}" aria-label="Decrease Temp">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="glance-footer">
+        <span class="glance-meta-text">
+          ${isPowerOn ? `Fan: ${fanLabel(d.fan_rate)} • Swing: ${swingLabel(d.fan_dir)}` : "Standby / Idle"}
+        </span>
+        <button class="glance-btn-detail" data-id="${d.id}">
+          <span>Controls</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;">
+            <polyline points="9 18 15 12 9 6"></polyline>
+          </svg>
+        </button>
+      </div>
+    `;
+
+    // Click whole card body to navigate to detailed controls
+    card.addEventListener("click", (e) => {
+      // Don't navigate if clicking on buttons or inputs
+      if (e.target.closest("button") || e.target.closest("input")) return;
+      openDeviceDetail(d.id);
+    });
+
+    // Rename button
+    const renameBtn = card.querySelector(".btn-rename-card");
+    if (renameBtn) {
+      renameBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openRenameModal(d.id);
+      });
+    }
+
+    // Power toggle button
+    const powerBtn = card.querySelector(".glance-power-btn");
+    if (powerBtn) {
+      powerBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        toggleDevicePower(d.id);
+      });
+    }
+
+    // Stepper buttons
+    const upBtn = card.querySelector(".btn-stepper-up");
+    if (upBtn) {
+      upBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        nudgeDeviceTemp(d.id, 0.5);
+      });
+    }
+
+    const downBtn = card.querySelector(".btn-stepper-down");
+    if (downBtn) {
+      downBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        nudgeDeviceTemp(d.id, -0.5);
+      });
+    }
+
+    // Detail button
+    const detailBtn = card.querySelector(".glance-btn-detail");
+    if (detailBtn) {
+      detailBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openDeviceDetail(d.id);
+      });
+    }
+
+    overviewGrid.appendChild(card);
+  });
+}
+
+// Quick Control: Power Toggle on Overview Card
+async function toggleDevicePower(deviceId) {
+  const dev = devices.find(d => d.id === deviceId);
+  if (!dev) return;
+
+  const newPower = !dev.power;
+  dev.power = newPower;
+
+  // Immediate optimistic update
+  renderOverview();
+  renderTabs();
+
+  if (deviceId === activeDeviceId) {
+    applyOptimisticPower(newPower);
+  }
+
+  showToast(`${dev.name || dev.id}: Turning ${newPower ? "ON" : "OFF"}...`);
+
+  try {
+    const res = await fetch(`/api/devices/${deviceId}/control`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ power: newPower })
+    });
+    const updated = await res.json();
+    if (updated.error) throw new Error(updated.error);
+    Object.assign(dev, updated);
+    renderOverview();
+    renderTabs();
+    showToast(`${dev.name || dev.id}: ${newPower ? "ON" : "OFF"}`);
+  } catch (err) {
+    showToast(`Error: ${err.message}`, true);
+    fetchDevices(true);
+  }
+}
+
+// Quick Control: Temp +/- Stepper on Overview Card (Debounced)
+function nudgeDeviceTemp(deviceId, delta) {
+  const dev = devices.find(d => d.id === deviceId);
+  if (!dev) return;
+
+  const current = Number(dev.target_temp || 24.0);
+  const minTemp = Number(dev.min_temp || 18.0);
+  const maxTemp = Number(dev.max_temp || 32.0);
+  const nextTemp = Math.min(maxTemp, Math.max(minTemp, Math.round((current + delta) * 10) / 10));
+
+  dev.target_temp = nextTemp;
+  renderOverview();
+  renderTabs();
+
+  if (deviceId === activeDeviceId) {
+    applyOptimisticTemp(nextTemp);
+  }
+
+  if (!devicePending[deviceId]) devicePending[deviceId] = {};
+  devicePending[deviceId].target_temp = nextTemp;
+
+  if (deviceTimers[deviceId]) clearTimeout(deviceTimers[deviceId]);
+  deviceTimers[deviceId] = setTimeout(async () => {
+    const patch = { ...devicePending[deviceId] };
+    delete devicePending[deviceId];
+    try {
+      const res = await fetch(`/api/devices/${deviceId}/control`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch)
+      });
+      const updated = await res.json();
+      if (updated.error) throw new Error(updated.error);
+      Object.assign(dev, updated);
+      renderOverview();
+      renderTabs();
+    } catch (err) {
+      showToast(`Error adjusting temperature: ${err.message}`, true);
+    }
+  }, 350);
+}
+
+// Quick Action: Turn All Running Units Off
+async function turnAllOff() {
+  const activeUnits = devices.filter(d => d.configured && d.power);
+  if (activeUnits.length === 0) {
+    showToast("All A/C units are already off");
+    return;
+  }
+
+  activeUnits.forEach(d => { d.power = false; });
+  renderOverview();
+  renderTabs();
+  showToast("Turning all units off...");
+
+  const promises = activeUnits.map(d =>
+    fetch(`/api/devices/${d.id}/control`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ power: false })
+    })
+  );
+
+  await Promise.allSettled(promises);
+  await fetchDevices(true);
+  showToast("All A/C units turned off");
 }
 
 // Instant Tab Switcher (0ms feedback from server RAM cache)
@@ -204,31 +570,31 @@ function switchTab(newDeviceId) {
   stopCountdown();
   activeDeviceId = newDeviceId;
 
-  // 1. Immediately update active tab highlight
+  // Update tab highlights
   document.querySelectorAll(".device-tab").forEach(tab => {
     tab.classList.toggle("active", tab.id === `tab-${newDeviceId}`);
   });
 
   const devMeta = devices.find(d => d.id === newDeviceId) || { id: newDeviceId, name: newDeviceId, ip: "", configured: false };
 
-  // 2. If unconfigured slot, show setup card immediately
+  // If unconfigured slot, show setup card immediately
   if (!devMeta.configured) {
     renderUnconfiguredView(devMeta);
     setStatus("online", "Unconfigured Slot");
     return;
   }
 
-  // 3. Switch view panel and load from server RAM cache silently (<2ms)
+  // Switch view panel and load from server RAM cache silently (<2ms)
   activeDeviceView.classList.remove("hidden");
   unconfiguredView.classList.add("hidden");
+  overviewView.classList.add("hidden");
 
-  // 4. Fetch state from RAM cache immediately
+  // Fetch state from RAM cache immediately
   loadDeviceState(newDeviceId, true);
 }
 
 // Load single device state on-demand with cancellation of older requests
 async function loadDeviceState(id, isBackground = false, forceRefresh = false) {
-  // Abort any previous pending request so late responses never spasm the UI
   if (abortController) {
     abortController.abort();
   }
@@ -237,7 +603,8 @@ async function loadDeviceState(id, isBackground = false, forceRefresh = false) {
 
   if (!isBackground) {
     isBusy = true;
-    setStatus("busy", "Syncing with AC...");
+    setStatus("busy", "Syncing unit...");
+    blankActiveFields(devices.find(d => d.id === id) || { id, ip: "..." });
   }
 
   try {
@@ -246,7 +613,6 @@ async function loadDeviceState(id, isBackground = false, forceRefresh = false) {
     if (!res.ok) throw new Error("HTTP connection error");
     const state = await res.json();
 
-    // Discard stale responses if user clicked another tab in the meantime
     if (currentRequestId !== activeRequestId || id !== activeDeviceId) {
       return;
     }
@@ -260,10 +626,7 @@ async function loadDeviceState(id, isBackground = false, forceRefresh = false) {
       startCountdown();
     }
   } catch (err) {
-    if (err.name === "AbortError") {
-      // Clean cancellation, do nothing
-      return;
-    }
+    if (err.name === "AbortError") return;
     if (currentRequestId === activeRequestId) {
       setStatus("error", "Unit Offline / Unreachable");
       labelModeSummary.textContent = "UNIT UNREACHABLE";
@@ -279,6 +642,7 @@ async function loadDeviceState(id, isBackground = false, forceRefresh = false) {
 // Render Unconfigured State
 function renderUnconfiguredView(state) {
   activeDeviceView.classList.add("hidden");
+  overviewView.classList.add("hidden");
   unconfiguredView.classList.remove("hidden");
 
   setupDeviceTitle.textContent = `${state.name} Not Configured`;
@@ -289,6 +653,7 @@ function renderUnconfiguredView(state) {
 // Render Active State
 function renderActiveView(state) {
   unconfiguredView.classList.add("hidden");
+  overviewView.classList.add("hidden");
   activeDeviceView.classList.remove("hidden");
 
   activeDeviceName.textContent = state.name;
@@ -340,43 +705,60 @@ function renderActiveView(state) {
     btn.classList.toggle("active", btn.dataset.fan === state.fan_rate);
   });
 
-  // Swing chips (Hide entire vane section if hardware does not support swing)
-  const swingSection = document.getElementById("swing-selector")?.closest(".control-section");
-  if (swingSection) {
-    swingSection.style.display = state.supports_swing === false ? "none" : "";
-  }
+  // Swing chips
   document.querySelectorAll("#swing-selector .chip-btn").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.swing === String(state.fan_dir));
   });
 
-  // Telemetry
-  statHtemp.innerHTML = state.indoor_temp !== null ? `${state.indoor_temp.toFixed(1)}<span class="stat-unit">°C</span>` : `--<span class="stat-unit">°C</span>`;
-  statOtemp.innerHTML = state.outdoor_temp !== null ? `${state.outdoor_temp.toFixed(1)}<span class="stat-unit">°C</span>` : `--<span class="stat-unit">°C</span>`;
-  statHhum.innerHTML = state.humidity !== null && state.humidity > 0 ? `${state.humidity}<span class="stat-unit">%</span>` : `N/A`;
-  statCmpfreq.innerHTML = `${state.compressor_freq || 0}<span class="stat-unit">Hz</span>`;
-  statRuntime.innerHTML = `${state.today_runtime_mins || 0}<span class="stat-unit">m</span>`;
-  
-  const errCode = state.err || "0";
-  statError.textContent = errCode === "0" ? "0 (Normal)" : `Code ${errCode}`;
-  statError.className = `stat-value ${errCode === "0" ? "stat-ok" : ""}`;
+  // Environmental Sensor Readings
+  statHtemp.innerHTML = state.indoor_temp !== undefined && state.indoor_temp !== null
+    ? `${state.indoor_temp}<span class="stat-unit">°C</span>`
+    : `--<span class="stat-unit">°C</span>`;
 
+  statOtemp.innerHTML = state.outdoor_temp !== undefined && state.outdoor_temp !== null
+    ? `${state.outdoor_temp}<span class="stat-unit">°C</span>`
+    : `--<span class="stat-unit">°C</span>`;
+
+  statHhum.innerHTML = state.indoor_humidity !== undefined && state.indoor_humidity !== null
+    ? `${state.indoor_humidity}<span class="stat-unit">%</span>`
+    : `--<span class="stat-unit">%</span>`;
+
+  statCmpfreq.innerHTML = state.compressor_freq !== undefined && state.compressor_freq !== null
+    ? `${state.compressor_freq}<span class="stat-unit">Hz</span>`
+    : `--<span class="stat-unit">Hz</span>`;
+
+  statRuntime.innerHTML = state.runtime_today !== undefined && state.runtime_today !== null
+    ? `${state.runtime_today}<span class="stat-unit">m</span>`
+    : `--<span class="stat-unit">m</span>`;
+
+  const errCode = state.error_code ?? 0;
+  statError.textContent = errCode === 0 ? "0 (Normal)" : `Code ${errCode}`;
+  statError.className = errCode === 0 ? "stat-value stat-ok" : "stat-value stat-error";
+
+  // Hardware specs
   hwMac.textContent = state.mac || "--";
-  hwFirmware.textContent = `v${state.firmware || "1.16.0"}`;
-  if (hwClock) {
-    hwClock.textContent = state.device_clock || "--";
+  hwFirmware.textContent = state.firmware_version || "--";
+  if (hwClock) hwClock.textContent = state.ac_clock || "--";
+
+  // Sync tab badge
+  if (activeDeviceId) {
+    const tab = document.getElementById(`tab-${activeDeviceId}`);
+    if (tab) {
+      const badge = tab.querySelector(".tab-badge");
+      if (badge) {
+        badge.textContent = state.power ? `${Number(state.target_temp || 24).toFixed(1)}°C` : "OFF";
+      }
+    }
   }
 
-  // Update tab badge for this active device
-  const activeTab = document.getElementById(`tab-${state.id}`);
-  if (activeTab) {
-    const badge = activeTab.querySelector(".tab-badge");
-    if (badge) {
-      badge.textContent = state.power ? `${state.target_temp || 24}°C` : "OFF";
-    }
+  // Also update corresponding device in devices cache
+  const d = devices.find(dev => dev.id === state.id);
+  if (d) {
+    Object.assign(d, state);
   }
 }
 
-// Optimistic UI Updaters (0ms instant visual feedback)
+// Optimistic UI Updaters
 function applyOptimisticPower(power) {
   btnPower.classList.toggle("is-on", power);
   dialGlow.style.opacity = power ? "0.7" : "0.15";
@@ -431,7 +813,7 @@ function applyOptimisticSwing(swing) {
   });
 }
 
-// Queue & Debounce Control Commands
+// Queue & Debounce Control Commands for Active Device
 function queuePatch(patch, debounceMs = 350) {
   if (!activeDeviceId) return;
 
@@ -477,13 +859,11 @@ async function flushPendingPatch() {
     activeDeviceState = updated;
     lastConfirmedState = JSON.parse(JSON.stringify(updated));
 
-    // If no newer changes were queued while network call was in flight
     if (Object.keys(pendingPatch).length === 0) {
       renderActiveView(updated);
       showToast("Command applied to AC");
       startCountdown();
     } else {
-      // User tapped while previous request was in flight; flush next batch immediately
       flushPendingPatch();
     }
   } catch (err) {
@@ -501,7 +881,73 @@ async function flushPendingPatch() {
   }
 }
 
-// Event Listeners with 0ms Optimistic Feedback & Debouncing
+// Direct In-Browser Nickname Customization
+function openRenameModal(deviceId) {
+  const dev = devices.find(d => d.id === deviceId);
+  if (!dev) return;
+
+  renameTargetDeviceId = deviceId;
+  inputRenameName.value = dev.name || dev.id;
+  modalRename.classList.remove("hidden");
+  setTimeout(() => {
+    inputRenameName.focus();
+    inputRenameName.select();
+  }, 60);
+}
+
+function closeRenameModal() {
+  modalRename.classList.add("hidden");
+  renameTargetDeviceId = null;
+}
+
+async function saveRename() {
+  if (!renameTargetDeviceId) return;
+  const dev = devices.find(d => d.id === renameTargetDeviceId);
+  if (!dev) return;
+
+  const newName = inputRenameName.value.trim();
+  if (!newName) {
+    showToast("Please enter a room nickname", true);
+    return;
+  }
+
+  btnSaveRename.disabled = true;
+  try {
+    const payload = {
+      id: dev.id,
+      name: newName,
+      ip: dev.ip,
+      key: dev.key || ""
+    };
+
+    const res = await fetch("/api/devices/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || "Save failed");
+
+    dev.name = newName;
+    if (activeDeviceId === dev.id) {
+      activeDeviceName.textContent = newName;
+    }
+
+    closeRenameModal();
+    renderTabs();
+    if (currentView === "overview") {
+      renderOverview();
+    }
+    showToast(`Renamed to "${newName}"`);
+  } catch (err) {
+    showToast(`Rename failed: ${err.message}`, true);
+  } finally {
+    btnSaveRename.disabled = false;
+  }
+}
+
+// Event Listeners for Single Unit Controls
 document.getElementById("btn-power").addEventListener("click", () => {
   if (!activeDeviceState) return;
   const currentPower = pendingPatch.power !== undefined ? pendingPatch.power : !!activeDeviceState.power;
@@ -576,9 +1022,62 @@ document.querySelectorAll("#swing-selector .chip-btn").forEach(btn => {
   });
 });
 
+// View Toggle & Back Navigation
+if (btnToggleView) {
+  btnToggleView.addEventListener("click", () => {
+    setView(currentView === "overview" ? "detail" : "overview");
+  });
+}
+
+if (btnBackToOverview) {
+  btnBackToOverview.addEventListener("click", () => {
+    setView("overview");
+  });
+}
+
+if (btnAllOff) {
+  btnAllOff.addEventListener("click", turnAllOff);
+}
+
+// Rename Active Unit from Detail View Header
+if (btnEditActiveName) {
+  btnEditActiveName.addEventListener("click", () => {
+    if (activeDeviceId) openRenameModal(activeDeviceId);
+  });
+}
+
+// Rename Modal Controls
+if (btnCloseRenameModal) btnCloseRenameModal.addEventListener("click", closeRenameModal);
+if (btnCancelRename) btnCancelRename.addEventListener("click", closeRenameModal);
+if (btnSaveRename) btnSaveRename.addEventListener("click", saveRename);
+if (modalRename) {
+  modalRename.addEventListener("click", (e) => {
+    if (e.target === modalRename) closeRenameModal();
+  });
+}
+if (inputRenameName) {
+  inputRenameName.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") saveRename();
+    else if (e.key === "Escape") closeRenameModal();
+  });
+}
+
+// Diagnostics Accordion Summary Label Sync
+if (diagnosticsDrawer) {
+  diagnosticsDrawer.addEventListener("toggle", () => {
+    const pill = diagnosticsDrawer.querySelector(".summary-pill");
+    if (pill) {
+      pill.textContent = diagnosticsDrawer.open ? "Hide" : "Show";
+    }
+  });
+}
+
 // Refresh button (forces live telemetry read from AC hardware)
 btnRefresh.addEventListener("click", () => {
-  if (activeDeviceId) {
+  if (currentView === "overview") {
+    showToast("Refreshing all units...");
+    fetchDevices(false);
+  } else if (activeDeviceId) {
     showToast("Refreshing live from AC...");
     loadDeviceState(activeDeviceId, false, true);
   }
@@ -764,8 +1263,12 @@ function renderDiscoveredUnits(units) {
 
 // Auto-refresh active AC when tab is restored from background
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && activeDeviceId && !isUpdating) {
-    loadDeviceState(activeDeviceId);
+  if (!document.hidden && !isUpdating) {
+    if (currentView === "overview") {
+      fetchDevices(true);
+    } else if (activeDeviceId) {
+      loadDeviceState(activeDeviceId, true);
+    }
   }
 });
 

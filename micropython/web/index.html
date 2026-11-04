@@ -24,7 +24,6 @@
       <div class="brand">
         <div class="brand-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="2" y1="12" x2="22" y2="12"></line>
             <line x1="12" y1="2" x2="12" y2="22"></line>
             <path d="m20 16-4-4 4-4"></path>
             <path d="m4 8 4 4-4 4"></path>
@@ -43,6 +42,10 @@
           <span class="status-pulse"></span>
           <span class="status-text" id="status-text">Connected</span>
         </div>
+        <button id="btn-toggle-view" class="pill-btn" title="Toggle Overview / Detailed View">
+          <span class="btn-icon" id="toggle-view-icon">🏠</span>
+          <span id="toggle-view-text">All Units</span>
+        </button>
         <button id="btn-open-discovery" class="pill-btn" title="Discover & Configure Units">
           <span class="btn-icon">📡</span>
           <span>Units & Keys</span>
@@ -64,20 +67,60 @@
 
     <!-- Main Content Area -->
     <main class="dashboard-content" id="dashboard-content">
-      <!-- Loading Skeleton / Active View Rendered by JS -->
+      <!-- Loading Skeleton -->
       <div class="loading-state" id="loading-state">
         <div class="spinner"></div>
         <p>Connecting to Daikin Wi-Fi unit...</p>
       </div>
 
+      <!-- Overview / Landing View: All ACs at a glance -->
+      <div id="overview-view" class="view-panel hidden">
+        <div class="overview-header-bar">
+          <div class="overview-stats">
+            <h2 class="overview-title">All Climate Units</h2>
+            <p class="overview-subtitle" id="overview-subtitle">Loading units...</p>
+          </div>
+          <div class="overview-actions">
+            <button id="btn-all-off" class="pill-btn pill-btn-danger" title="Turn all running units off">
+              <span class="btn-icon">⏹️</span>
+              <span>Turn All Off</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="overview-grid" id="overview-grid">
+          <!-- Room cards rendered dynamically by JS -->
+        </div>
+      </div>
+
+      <!-- Single Device Detail View -->
       <div id="active-device-view" class="view-panel hidden">
+        <!-- Back Navigation Bar -->
+        <div class="detail-nav-bar">
+          <button id="btn-back-to-overview" class="btn-back" title="Back to All Units">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="back-icon">
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            <span>All Units</span>
+          </button>
+          <span class="detail-nav-hint">Tap to view all rooms at a glance</span>
+        </div>
+
         <!-- Top Control Deck -->
         <div class="control-grid">
           <!-- Main Thermostat Card -->
           <section class="card thermostat-card">
             <div class="card-header">
-              <div>
-                <h2 class="card-title" id="active-device-name">Homeroom AC</h2>
+              <div class="title-with-rename">
+                <div class="name-edit-wrapper">
+                  <h2 class="card-title" id="active-device-name">Homeroom AC</h2>
+                  <button id="btn-edit-active-name" class="icon-button-sm btn-rename" title="Rename this AC">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                      <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
+                    </svg>
+                  </button>
+                </div>
                 <p class="card-subtitle" id="active-device-ip">192.168.1.104 • BRP072C42</p>
               </div>
               <button id="btn-power" class="power-toggle" aria-label="Toggle Power">
@@ -165,11 +208,14 @@
 
           <!-- Telemetry & Live Sensors -->
           <section class="card telemetry-card">
-            <h3 class="card-title">Live Hardware Telemetry</h3>
-            <p class="card-subtitle">Direct thermistors & PCB registers (no inference)</p>
+            <div class="telemetry-header">
+              <h3 class="card-title">Live Sensors</h3>
+              <p class="card-subtitle">Direct hardware thermistors</p>
+            </div>
 
-            <div class="telemetry-grid">
-              <div class="stat-box">
+            <!-- Primary Climate Essentials (Prominent & Clean) -->
+            <div class="primary-sensors-row">
+              <div class="stat-box primary-stat">
                 <span class="stat-icon">🏠</span>
                 <div class="stat-meta">
                   <span class="stat-label">Indoor Room Temp</span>
@@ -177,66 +223,80 @@
                 </div>
               </div>
 
-              <div class="stat-box">
-                <span class="stat-icon">⛅</span>
-                <div class="stat-meta">
-                  <span class="stat-label">Outdoor Condenser</span>
-                  <div class="stat-value" id="stat-otemp">--<span class="stat-unit">°C</span></div>
-                </div>
-              </div>
-
-              <div class="stat-box">
+              <div class="stat-box primary-stat">
                 <span class="stat-icon">💧</span>
                 <div class="stat-meta">
                   <span class="stat-label">Indoor Humidity</span>
                   <div class="stat-value" id="stat-hhum">--<span class="stat-unit">%</span></div>
                 </div>
               </div>
-
-              <div class="stat-box">
-                <span class="stat-icon">⚡</span>
-                <div class="stat-meta">
-                  <span class="stat-label">Inverter Compressor</span>
-                  <div class="stat-value" id="stat-cmpfreq">--<span class="stat-unit">Hz</span></div>
-                </div>
-              </div>
-
-              <div class="stat-box">
-                <span class="stat-icon">⏱️</span>
-                <div class="stat-meta">
-                  <span class="stat-label">Today's Runtime</span>
-                  <div class="stat-value" id="stat-runtime">--<span class="stat-unit">m</span></div>
-                </div>
-              </div>
-
-              <div class="stat-box">
-                <span class="stat-icon">🛡️</span>
-                <div class="stat-meta">
-                  <span class="stat-label">Self-Diagnostic Error</span>
-                  <div class="stat-value stat-ok" id="stat-error">0 (Normal)</div>
-                </div>
-              </div>
             </div>
 
-            <!-- Hardware Metadata -->
-            <div class="hardware-info-box">
-              <div class="hw-item">
-                <span class="hw-label">MAC Address</span>
-                <span class="hw-value font-mono" id="hw-mac">--</span>
+            <!-- Collapsible Advanced Technical Diagnostics (Decluttered) -->
+            <details class="diagnostics-drawer" id="diagnostics-drawer">
+              <summary class="diagnostics-summary">
+                <div class="summary-left">
+                  <span class="summary-icon">⚡</span>
+                  <span class="summary-text">Technical Diagnostics & Hardware</span>
+                </div>
+                <span class="summary-pill">Show</span>
+              </summary>
+              <div class="diagnostics-body">
+                <div class="telemetry-grid">
+                  <div class="stat-box">
+                    <span class="stat-icon">⛅</span>
+                    <div class="stat-meta">
+                      <span class="stat-label">Outdoor Condenser</span>
+                      <div class="stat-value" id="stat-otemp">--<span class="stat-unit">°C</span></div>
+                    </div>
+                  </div>
+
+                  <div class="stat-box">
+                    <span class="stat-icon">⚡</span>
+                    <div class="stat-meta">
+                      <span class="stat-label">Compressor Frequency</span>
+                      <div class="stat-value" id="stat-cmpfreq">--<span class="stat-unit">Hz</span></div>
+                    </div>
+                  </div>
+
+                  <div class="stat-box">
+                    <span class="stat-icon">⏱️</span>
+                    <div class="stat-meta">
+                      <span class="stat-label">Today's Runtime</span>
+                      <div class="stat-value" id="stat-runtime">--<span class="stat-unit">m</span></div>
+                    </div>
+                  </div>
+
+                  <div class="stat-box">
+                    <span class="stat-icon">🛡️</span>
+                    <div class="stat-meta">
+                      <span class="stat-label">Diagnostic Error</span>
+                      <div class="stat-value stat-ok" id="stat-error">0 (Normal)</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Hardware Metadata -->
+                <div class="hardware-info-box">
+                  <div class="hw-item">
+                    <span class="hw-label">MAC Address</span>
+                    <span class="hw-value font-mono" id="hw-mac">--</span>
+                  </div>
+                  <div class="hw-item">
+                    <span class="hw-label">Firmware</span>
+                    <span class="hw-value font-mono" id="hw-firmware">--</span>
+                  </div>
+                  <div class="hw-item">
+                    <span class="hw-label">Adapter Protocol</span>
+                    <span class="hw-value">BRP072C42 (Legacy TLS)</span>
+                  </div>
+                  <div class="hw-item">
+                    <span class="hw-label">Internal AC Clock</span>
+                    <span class="hw-value font-mono" id="hw-clock">--</span>
+                  </div>
+                </div>
               </div>
-              <div class="hw-item">
-                <span class="hw-label">Firmware</span>
-                <span class="hw-value font-mono" id="hw-firmware">--</span>
-              </div>
-              <div class="hw-item">
-                <span class="hw-label">Adapter Protocol</span>
-                <span class="hw-value">BRP072C42 (Legacy TLS)</span>
-              </div>
-              <div class="hw-item">
-                <span class="hw-label">Internal AC Clock</span>
-                <span class="hw-value font-mono" id="hw-clock">--</span>
-              </div>
-            </div>
+            </details>
           </section>
         </div>
       </div>
@@ -279,6 +339,7 @@
                 <strong>Paste & Save:</strong> Edit <code>daikin_config.json</code>. The server will auto-register it!
               </div>
             </div>
+          </div>
           <div class="setup-actions">
             <button id="btn-setup-open-discovery" class="btn-primary">
               <span>📡 Open Units & Key Helper</span>
@@ -291,6 +352,40 @@
     <!-- Floating Action Toast -->
     <div id="toast" class="toast">
       <span id="toast-message">Command sent</span>
+    </div>
+  </div>
+
+  <!-- In-Browser Nickname Customization Modal -->
+  <div id="modal-rename" class="modal-overlay hidden">
+    <div class="modal-card modal-card-sm">
+      <div class="modal-header">
+        <div class="modal-title-group">
+          <span class="modal-badge">CUSTOMIZE A/C</span>
+          <h2>Rename A/C Unit</h2>
+          <p class="modal-subtitle">Update the friendly room nickname shown in the app.</p>
+        </div>
+        <button id="btn-close-rename-modal" class="icon-button modal-close" title="Close">✕</button>
+      </div>
+
+      <div class="modal-body-padded">
+        <label for="input-rename-name" class="input-label">ROOM NICKNAME</label>
+        <input 
+          type="text" 
+          id="input-rename-name" 
+          class="key-input" 
+          placeholder="e.g. Mom's Bedroom" 
+          maxlength="32" 
+          autocomplete="off"
+        />
+        <p class="input-hint">Saved instantly to server config & all connected browsers.</p>
+      </div>
+
+      <div class="modal-footer-actions">
+        <button id="btn-cancel-rename" class="pill-btn">Cancel</button>
+        <button id="btn-save-rename" class="btn-primary">
+          <span>Save Nickname</span>
+        </button>
+      </div>
     </div>
   </div>
 
