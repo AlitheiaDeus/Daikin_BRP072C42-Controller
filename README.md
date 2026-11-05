@@ -4,6 +4,10 @@ A lightweight, zero-cloud local network controller and real-time web dashboard f
 
 Operates 100% locally over your home Wi-Fi/LAN without external cloud dependencies, subscription tiers, or vendor servers.
 
+<p align="center">
+  <img src="docs/images/daikin_dashboard.jpg" alt="Daikin AC Web Dashboard" width="100%" />
+</p>
+
 ---
 
 ## Features
