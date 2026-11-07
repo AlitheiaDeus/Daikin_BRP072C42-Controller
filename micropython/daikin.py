@@ -205,6 +205,8 @@ class DaikinController:
             "firmware": "",
             "model_type": "aircon",
             "err": "0",
+            "powerful": False,
+            "adv": "",
         }
 
     def _parse_response(self, text):
@@ -349,6 +351,8 @@ class DaikinController:
             "firmware": self._basic_cache.get("ver", "") if self._basic_cache else "",
             "model_type": self._basic_cache.get("type", "aircon") if self._basic_cache else "aircon",
             "err": ctrl.get("err", sensors.get("err", "0")),
+            "powerful": (self._last_state.get("powerful") if recent_cmd and self._last_state and "powerful" in self._last_state else (ctrl.get("adv") == "2")),
+            "adv": (self._last_state.get("adv") if recent_cmd and self._last_state and "adv" in self._last_state else ctrl.get("adv", "")),
             "raw_ctrl": ctrl,
             "raw_sensors": sensors
         }
@@ -378,6 +382,13 @@ class DaikinController:
             "f_dir": current.get("f_dir", "0"),
         }
 
+        if "adv" in kwargs:
+            payload["adv"] = str(kwargs["adv"])
+        elif "powerful" in kwargs:
+            payload["adv"] = "2" if kwargs["powerful"] else ""
+        else:
+            payload["adv"] = current.get("adv", "")
+
         if "power" in kwargs:
             payload["pow"] = "1" if kwargs["power"] else "0"
         if "mode" in kwargs:
@@ -395,7 +406,7 @@ class DaikinController:
         if "fan_dir" in kwargs:
             payload["f_dir"] = str(kwargs["fan_dir"])
 
-        for k in ("pow", "stemp", "shum", "f_rate", "f_dir"):
+        for k in ("pow", "stemp", "shum", "f_rate", "f_dir", "adv"):
             if k in kwargs:
                 payload[k] = str(kwargs[k])
 
@@ -434,6 +445,8 @@ class DaikinController:
                 self._last_state["target_temp"] = _parse_temp(payload.get("stemp"), 25.0)
                 self._last_state["fan_rate"] = payload["f_rate"]
                 self._last_state["fan_dir"] = payload["f_dir"]
+                self._last_state["adv"] = payload.get("adv", "")
+                self._last_state["powerful"] = (payload.get("adv") == "2")
                 self._last_state["raw_ctrl"] = dict(self._last_ctrl)
                 synth = dict(self._last_state)
                 synth["daikin_res"] = parsed

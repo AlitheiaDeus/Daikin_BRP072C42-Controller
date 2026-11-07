@@ -66,6 +66,7 @@ const activeDeviceName = document.getElementById("active-device-name");
 const activeDeviceIp = document.getElementById("active-device-ip");
 const btnEditActiveName = document.getElementById("btn-edit-active-name");
 const btnPower = document.getElementById("btn-power");
+const btnPowerful = document.getElementById("btn-powerful");
 const valTargetTemp = document.getElementById("val-target-temp");
 const labelModeSummary = document.getElementById("label-mode-summary");
 const dialGlow = document.getElementById("dial-glow");
@@ -484,6 +485,7 @@ function renderOverview() {
       <div class="tile-header">
         <div class="tile-title-row">
           <span class="tile-name">${roomName}</span>
+          ${isPowerOn && (d.powerful || d.adv === "2") ? '<span class="badge-powerful-chip">⚡ 20m</span>' : ''}
         </div>
         <div class="tile-controls-badge" title="Tap card for detailed controls">
           <span>🎛️</span>
@@ -922,12 +924,23 @@ function renderActiveView(state) {
 
   lastConfirmedState = JSON.parse(JSON.stringify(state));
 
+  const isPowerful = state.power && (state.powerful || state.adv === "2");
+  if (btnPowerful) {
+    btnPowerful.classList.toggle("is-active", isPowerful);
+  }
+
   if (state.power) {
     btnPower.classList.add("is-on");
-    labelModeSummary.textContent = `${(state.mode || "COOL").toUpperCase()} ACTIVE`;
-    dialGlow.style.opacity = "0.7";
+    if (isPowerful) {
+      labelModeSummary.textContent = "⚡ POWERFUL ACTIVE (20M)";
+      dialGlow.style.opacity = "1.0";
+    } else {
+      labelModeSummary.textContent = `${(state.mode || "COOL").toUpperCase()} ACTIVE`;
+      dialGlow.style.opacity = "0.7";
+    }
   } else {
     btnPower.classList.remove("is-on");
+    if (btnPowerful) btnPowerful.classList.remove("is-active");
     labelModeSummary.textContent = "UNIT STANDBY / OFF";
     dialGlow.style.opacity = "0.15";
   }
@@ -1206,6 +1219,33 @@ async function saveRename() {
 }
 
 // Event Listeners for Single Unit Controls
+const btnPowerfulDetail = document.getElementById("btn-powerful");
+if (btnPowerfulDetail) {
+  attachTouchSafeClick(btnPowerfulDetail, () => {
+    if (!activeDeviceId || !activeDeviceState) return;
+    if (!activeDeviceState.power) {
+      showToast("Turn on AC before activating Powerful mode", true);
+      return;
+    }
+    const currentAdv = pendingPatch.adv !== undefined ? pendingPatch.adv : (activeDeviceState.adv || (activeDeviceState.powerful ? "2" : ""));
+    const nextPowerful = currentAdv !== "2";
+    const nextAdv = nextPowerful ? "2" : "";
+
+    btnPowerfulDetail.classList.toggle("is-active", nextPowerful);
+    if (nextPowerful) {
+      labelModeSummary.textContent = "⚡ POWERFUL ACTIVE (20M)";
+      dialGlow.style.opacity = "1.0";
+      showToast("⚡ Powerful 20-min boost engaged");
+    } else {
+      labelModeSummary.textContent = `${(activeDeviceState.mode || "COOL").toUpperCase()} ACTIVE`;
+      dialGlow.style.opacity = "0.7";
+      showToast("Powerful mode cancelled");
+    }
+
+    queuePatch({ adv: nextAdv, powerful: nextPowerful }, 100);
+  });
+}
+
 const btnPowerDetail = document.getElementById("btn-power");
 if (btnPowerDetail) {
   attachTouchSafeClick(btnPowerDetail, () => {
@@ -1349,7 +1389,7 @@ function renderDashboard() {
       </td>
       <td>
         <div>${statusBadge}</div>
-        <div style="margin-top:4px; font-size:0.78rem;">${powerLabel} • ${modeLabel}</div>
+        <div style="margin-top:4px; font-size:0.78rem;">${powerLabel} • ${modeLabel} ${(dev.powerful || dev.adv === "2") ? '• <span class="diag-powerful-tag">⚡ 20m</span>' : ''}</div>
       </td>
       <td style="font-weight:700; color:var(--accent-cyan); font-size:1rem;">${targetTemp}</td>
       <td>
