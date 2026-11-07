@@ -419,20 +419,21 @@ class DaikinController:
                 self._last_ctrl.update(payload)
                 self._last_ctrl["ret"] = "OK"
 
-                if self._last_state:
-                    self._last_state["power"] = payload["pow"] == "1"
-                    self._last_state["mode"] = MODE_REV_MAP.get(payload["mode"], "cool")
-                    self._last_state["mode_raw"] = payload["mode"]
-                    self._last_state["target_temp"] = _parse_temp(payload.get("stemp"), 25.0)
-                    self._last_state["fan_rate"] = payload["f_rate"]
-                    self._last_state["fan_dir"] = payload["f_dir"]
-                    restore = getattr(self, "_turbo_restore", None)
-                    self._last_state["turbo"] = bool(restore)
-                    self._last_state["turbo_remaining_sec"] = max(0, int(restore["expire_at"] - time.time())) if restore else 0
-                    self._last_state["raw_ctrl"] = dict(self._last_ctrl)
-                    synth = dict(self._last_state)
-                    synth["daikin_res"] = parsed
-                    return synth
+                if not self._last_state:
+                    self._last_state = self.get_default_state()
+                self._last_state["power"] = payload["pow"] == "1"
+                self._last_state["mode"] = MODE_REV_MAP.get(payload["mode"], "cool")
+                self._last_state["mode_raw"] = payload["mode"]
+                self._last_state["target_temp"] = _parse_temp(payload.get("stemp"), 25.0)
+                self._last_state["fan_rate"] = payload["f_rate"]
+                self._last_state["fan_dir"] = payload["f_dir"]
+                restore = getattr(self, "_turbo_restore", None)
+                self._last_state["turbo"] = bool(restore)
+                self._last_state["turbo_remaining_sec"] = max(0, int(restore["expire_at"] - time.time())) if restore else 0
+                self._last_state["raw_ctrl"] = dict(self._last_ctrl)
+                synth = dict(self._last_state)
+                synth["daikin_res"] = parsed
+                return synth
 
             return parsed
 

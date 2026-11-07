@@ -12,7 +12,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=3">
+  <link rel="stylesheet" href="style.css?v=4">
 </head>
 <body>
   <div class="ambient-glow glow-top"></div>
@@ -173,16 +173,14 @@
                   <button class="chip-btn chip-sm" data-swing="3" id="swing-3">3D</button>
                 </div>
               </div>
-            </div>
 
-            <!-- Extended Quick Boost Suite -->
-            <div class="control-section presets-section">
-              <label class="section-label">QUICK BOOST</label>
-              <div class="button-group presets-group">
-                <button class="chip-btn chip-turbo" id="btn-turbo" title="15-minute maximum chill at 18°C & Max Fan with auto-revert">
-                  <span class="chip-icon">⚡</span>
-                  <span id="turbo-label">Turbo 15m</span>
-                </button>
+              <div class="control-section boost-col">
+                <label class="section-label">BOOST</label>
+                <div class="button-group" id="boost-selector">
+                  <button class="chip-btn chip-sm" id="btn-turbo" title="15-minute Turbo Blast (18°C & Max Fan)">
+                    <span>⚡ Turbo</span>
+                  </button>
+                </div>
               </div>
             </div>
           </section>
@@ -437,6 +435,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=3"></script>
+  <script src="app.js?v=4"></script>
 </body>
 </html>

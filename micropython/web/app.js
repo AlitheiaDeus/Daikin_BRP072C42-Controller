@@ -67,9 +67,6 @@ const activeDeviceIp = document.getElementById("active-device-ip");
 const btnEditActiveName = document.getElementById("btn-edit-active-name");
 const btnPower = document.getElementById("btn-power");
 const btnTurbo = document.getElementById("btn-turbo");
-const turboLabel = document.getElementById("turbo-label");
-let turboTicker = null;
-let turboRemainingSec = 0;
 const valTargetTemp = document.getElementById("val-target-temp");
 const labelModeSummary = document.getElementById("label-mode-summary");
 const dialGlow = document.getElementById("dial-glow");
@@ -929,21 +926,13 @@ function renderActiveView(state) {
 
   const isTurbo = state.power && !!state.turbo;
   if (btnTurbo) {
-    btnTurbo.classList.toggle("is-active", isTurbo);
-    if (isTurbo) {
-      turboRemainingSec = state.turbo_remaining_sec || 900;
-      updateTurboLabel();
-      startTurboTicker();
-    } else {
-      stopTurboTicker();
-      if (turboLabel) turboLabel.textContent = "Turbo 15m";
-    }
+    btnTurbo.classList.toggle("active", isTurbo);
   }
 
   if (state.power) {
     btnPower.classList.add("is-on");
     if (isTurbo) {
-      labelModeSummary.textContent = "⚡ TURBO COOLING (15M)";
+      labelModeSummary.textContent = "⚡ TURBO ACTIVE (15M)";
       dialGlow.style.opacity = "1.0";
     } else {
       labelModeSummary.textContent = `${(state.mode || "COOL").toUpperCase()} ACTIVE`;
@@ -951,9 +940,7 @@ function renderActiveView(state) {
     }
   } else {
     btnPower.classList.remove("is-on");
-    if (btnTurbo) btnTurbo.classList.remove("is-active");
-    stopTurboTicker();
-    if (turboLabel) turboLabel.textContent = "Turbo 15m";
+    if (btnTurbo) btnTurbo.classList.remove("active");
     labelModeSummary.textContent = "UNIT STANDBY / OFF";
     dialGlow.style.opacity = "0.15";
   }
@@ -1055,6 +1042,8 @@ function applyOptimisticPower(power) {
 
 function applyOptimisticTemp(temp) {
   valTargetTemp.textContent = Number(temp).toFixed(1);
+  if (btnTurbo) btnTurbo.classList.remove("active");
+  if (activeDeviceState) activeDeviceState.turbo = false;
   if (activeDeviceId) {
     const activeTab = document.getElementById(`tab-${activeDeviceId}`);
     if (activeTab) {
@@ -1081,12 +1070,39 @@ function applyOptimisticFan(fan) {
   document.querySelectorAll("#fan-selector .chip-btn").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.fan === fan);
   });
+  if (btnTurbo) btnTurbo.classList.remove("active");
+  if (activeDeviceState) activeDeviceState.turbo = false;
 }
 
 function applyOptimisticSwing(swing) {
   document.querySelectorAll("#swing-selector .chip-btn").forEach(btn => {
     btn.classList.toggle("active", btn.dataset.swing === String(swing));
   });
+}
+
+function applyOptimisticTurbo(turbo) {
+  if (btnTurbo) {
+    btnTurbo.classList.toggle("active", turbo);
+  }
+  if (activeDeviceState) {
+    activeDeviceState.turbo = turbo;
+  }
+  const isPowerOn = pendingPatch.power !== undefined ? pendingPatch.power : (activeDeviceState?.power);
+  if (isPowerOn && turbo) {
+    labelModeSummary.textContent = "⚡ TURBO ACTIVE (15M)";
+    valTargetTemp.textContent = "18.0";
+    dialGlow.style.opacity = "1.0";
+    document.querySelectorAll("#fan-selector .chip-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.fan === "7");
+    });
+    document.querySelectorAll("#mode-selector .chip-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.mode === "cool");
+    });
+  } else if (isPowerOn) {
+    const curMode = (pendingPatch.mode || activeDeviceState?.mode || "cool").toUpperCase();
+    labelModeSummary.textContent = `${curMode} ACTIVE`;
+    dialGlow.style.opacity = "0.7";
+  }
 }
 
 // Queue & Debounce Control Commands for Active Device
@@ -1231,64 +1247,22 @@ async function saveRename() {
   }
 }
 
-function updateTurboLabel() {
-  if (!turboLabel) return;
-  const m = Math.floor(turboRemainingSec / 60);
-  const s = turboRemainingSec % 60;
-  turboLabel.textContent = `Turbo ${m}:${s.toString().padStart(2, '0')}`;
-}
-
-function startTurboTicker() {
-  stopTurboTicker();
-  turboTicker = setInterval(() => {
-    turboRemainingSec--;
-    if (turboRemainingSec <= 0) {
-      stopTurboTicker();
-      if (turboLabel) turboLabel.textContent = "Turbo 15m";
-      if (btnTurbo) btnTurbo.classList.remove("is-active");
-      showToast("Turbo complete, restoring normal mode");
-    } else {
-      updateTurboLabel();
-    }
-  }, 1000);
-}
-
-function stopTurboTicker() {
-  if (turboTicker) {
-    clearInterval(turboTicker);
-    turboTicker = null;
-  }
-}
-
-// Event Listeners for Single Unit Controls
-const btnTurboDetail = document.getElementById("btn-turbo");
-if (btnTurboDetail) {
-  attachTouchSafeClick(btnTurboDetail, () => {
-    if (!activeDeviceId || !activeDeviceState) return;
-    if (!activeDeviceState.power) {
-      showToast("Turn on AC before activating Turbo", true);
-      return;
-    }
-    const isCurrentlyTurbo = !!activeDeviceState.turbo;
+// Turbo button (part of extended controls)
+if (btnTurbo) {
+  attachTouchSafeClick(btnTurbo, () => {
+    if (!activeDeviceId) return;
+    const isCurrentlyTurbo = activeDeviceState ? !!activeDeviceState.turbo : false;
     const nextTurbo = !isCurrentlyTurbo;
 
-    btnTurboDetail.classList.toggle("is-active", nextTurbo);
-    if (nextTurbo) {
-      turboRemainingSec = 900;
-      updateTurboLabel();
-      startTurboTicker();
-      labelModeSummary.textContent = "⚡ TURBO COOLING (15M)";
-      dialGlow.style.opacity = "1.0";
-      showToast("⚡ Turbo 15m blast engaged (18°C & Max Fan)");
-    } else {
-      stopTurboTicker();
-      if (turboLabel) turboLabel.textContent = "Turbo 15m";
-      labelModeSummary.textContent = `${(activeDeviceState.mode || "COOL").toUpperCase()} ACTIVE`;
-      dialGlow.style.opacity = "0.7";
-      showToast("Turbo cancelled");
-    }
+    applyOptimisticTurbo(nextTurbo);
 
-    queuePatch({ turbo: nextTurbo }, 100);
+    const patch = { turbo: nextTurbo };
+    const isPowerOn = pendingPatch.power !== undefined ? pendingPatch.power : (activeDeviceState?.power);
+    if (nextTurbo && !isPowerOn) {
+      patch.power = true;
+      applyOptimisticPower(true);
+    }
+    queuePatch(patch, 300);
   });
 }
 
