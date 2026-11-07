@@ -111,8 +111,8 @@ class DaikinController:
             "firmware": "",
             "model_type": "aircon",
             "err": "0",
-            "powerful": False,
-            "adv": "",
+            "turbo": False,
+            "turbo_remaining_sec": 0,
         }
 
     @property
@@ -243,6 +243,24 @@ class DaikinController:
         ordered_modes = [m for m in ("cool", "dry", "fan", "auto", "heat") if m in supported_modes]
 
         cool_l = _parse_temp(model_info.get("cool_l"), 18.0)
+        restore = getattr(self, "_turbo_restore", None)
+        is_turbo = False
+        remaining = 0
+        if restore:
+            now = time.time()
+            if now >= restore.get("expire_at", 0):
+                self._turbo_restore = None
+                try:
+                    self.update_settings(
+                        target_temp=restore.get("temp", 25.0),
+                        fan_rate=restore.get("fan", "A")
+                    )
+                except Exception:
+                    pass
+            else:
+                is_turbo = True
+                remaining = int(restore["expire_at"] - now)
+
         cool_h = _parse_temp(model_info.get("cool_h"), 32.0)
 
         # Optimistic lease: if a user command was sent within last 4s, keep user's control values
@@ -271,13 +289,13 @@ class DaikinController:
             "fan_rate": (self._last_state.get("fan_rate") if recent_cmd and self._last_state else ctrl.get("f_rate", "A")),
             "fan_dir": (self._last_state.get("fan_dir") if recent_cmd and self._last_state else ctrl.get("f_dir", "0")),
             "today_runtime_mins": self._last_runtime,
+            "turbo": is_turbo,
+            "turbo_remaining_sec": remaining,
             "device_clock": getattr(self, "_last_clock", ""),
             "mac": self._basic_cache.get("mac", "") if self._basic_cache else "",
             "firmware": self._basic_cache.get("ver", "") if self._basic_cache else "",
             "model_type": self._basic_cache.get("type", "aircon") if self._basic_cache else "aircon",
             "err": ctrl.get("err", sensors.get("err", "0")),
-            "powerful": (self._last_state.get("powerful") if recent_cmd and self._last_state and "powerful" in self._last_state else (ctrl.get("adv") == "2")),
-            "adv": (self._last_state.get("adv") if recent_cmd and self._last_state and "adv" in self._last_state else ctrl.get("adv", "")),
             "raw_ctrl": ctrl,
             "raw_sensors": sensors
         }
@@ -313,12 +331,28 @@ class DaikinController:
                 "f_dir": current.get("f_dir", "0"),
             }
 
-            if "adv" in kwargs:
-                payload["adv"] = str(kwargs["adv"])
-            elif "powerful" in kwargs:
-                payload["adv"] = "2" if kwargs["powerful"] else ""
+            if "turbo" in kwargs:
+                if kwargs["turbo"]:
+                    if not getattr(self, "_turbo_restore", None):
+                        self._turbo_restore = {
+                            "temp": _parse_temp(current.get("stemp"), 25.0),
+                            "fan": current.get("f_rate", "A"),
+                            "expire_at": time.time() + 900
+                        }
+                    min_t = self._last_state.get("min_temp", 18.0) if self._last_state else 18.0
+                    payload["stemp"] = f"{float(min_t):.1f}"
+                    payload["f_rate"] = "7"
+                    payload["pow"] = "1"
+                    payload["mode"] = "3"
+                else:
+                    restore = getattr(self, "_turbo_restore", None)
+                    if restore:
+                        payload["stemp"] = f"{float(restore.get('temp', 25.0)):.1f}"
+                        payload["f_rate"] = str(restore.get("fan", "A"))
+                        self._turbo_restore = None
             else:
-                payload["adv"] = current.get("adv", "")
+                if ("target_temp" in kwargs or "fan_rate" in kwargs or "stemp" in kwargs or "f_rate" in kwargs) and getattr(self, "_turbo_restore", None):
+                    self._turbo_restore = None
 
             # Map user-friendly values if supplied
             if "power" in kwargs:
@@ -392,8 +426,9 @@ class DaikinController:
                     self._last_state["target_temp"] = _parse_temp(payload.get("stemp"), 25.0)
                     self._last_state["fan_rate"] = payload["f_rate"]
                     self._last_state["fan_dir"] = payload["f_dir"]
-                    self._last_state["adv"] = payload.get("adv", "")
-                    self._last_state["powerful"] = (payload.get("adv") == "2")
+                    restore = getattr(self, "_turbo_restore", None)
+                    self._last_state["turbo"] = bool(restore)
+                    self._last_state["turbo_remaining_sec"] = max(0, int(restore["expire_at"] - time.time())) if restore else 0
                     self._last_state["raw_ctrl"] = dict(self._last_ctrl)
                     synth = dict(self._last_state)
                     synth["daikin_res"] = parsed

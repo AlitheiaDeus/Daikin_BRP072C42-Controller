@@ -66,7 +66,10 @@ const activeDeviceName = document.getElementById("active-device-name");
 const activeDeviceIp = document.getElementById("active-device-ip");
 const btnEditActiveName = document.getElementById("btn-edit-active-name");
 const btnPower = document.getElementById("btn-power");
-const btnPowerful = document.getElementById("btn-powerful");
+const btnTurbo = document.getElementById("btn-turbo");
+const turboLabel = document.getElementById("turbo-label");
+let turboTicker = null;
+let turboRemainingSec = 0;
 const valTargetTemp = document.getElementById("val-target-temp");
 const labelModeSummary = document.getElementById("label-mode-summary");
 const dialGlow = document.getElementById("dial-glow");
@@ -485,7 +488,7 @@ function renderOverview() {
       <div class="tile-header">
         <div class="tile-title-row">
           <span class="tile-name">${roomName}</span>
-          ${isPowerOn && (d.powerful || d.adv === "2") ? '<span class="badge-powerful-chip">⚡ 20m</span>' : ''}
+          ${isPowerOn && !!d.turbo ? '<span class="badge-turbo-chip">⚡ Turbo</span>' : ''}
         </div>
         <div class="tile-controls-badge" title="Tap card for detailed controls">
           <span>🎛️</span>
@@ -924,15 +927,23 @@ function renderActiveView(state) {
 
   lastConfirmedState = JSON.parse(JSON.stringify(state));
 
-  const isPowerful = state.power && (state.powerful || state.adv === "2");
-  if (btnPowerful) {
-    btnPowerful.classList.toggle("is-active", isPowerful);
+  const isTurbo = state.power && !!state.turbo;
+  if (btnTurbo) {
+    btnTurbo.classList.toggle("is-active", isTurbo);
+    if (isTurbo) {
+      turboRemainingSec = state.turbo_remaining_sec || 900;
+      updateTurboLabel();
+      startTurboTicker();
+    } else {
+      stopTurboTicker();
+      if (turboLabel) turboLabel.textContent = "Turbo 15m";
+    }
   }
 
   if (state.power) {
     btnPower.classList.add("is-on");
-    if (isPowerful) {
-      labelModeSummary.textContent = "⚡ POWERFUL ACTIVE (20M)";
+    if (isTurbo) {
+      labelModeSummary.textContent = "⚡ TURBO COOLING (15M)";
       dialGlow.style.opacity = "1.0";
     } else {
       labelModeSummary.textContent = `${(state.mode || "COOL").toUpperCase()} ACTIVE`;
@@ -940,7 +951,9 @@ function renderActiveView(state) {
     }
   } else {
     btnPower.classList.remove("is-on");
-    if (btnPowerful) btnPowerful.classList.remove("is-active");
+    if (btnTurbo) btnTurbo.classList.remove("is-active");
+    stopTurboTicker();
+    if (turboLabel) turboLabel.textContent = "Turbo 15m";
     labelModeSummary.textContent = "UNIT STANDBY / OFF";
     dialGlow.style.opacity = "0.15";
   }
@@ -1218,31 +1231,64 @@ async function saveRename() {
   }
 }
 
+function updateTurboLabel() {
+  if (!turboLabel) return;
+  const m = Math.floor(turboRemainingSec / 60);
+  const s = turboRemainingSec % 60;
+  turboLabel.textContent = `Turbo ${m}:${s.toString().padStart(2, '0')}`;
+}
+
+function startTurboTicker() {
+  stopTurboTicker();
+  turboTicker = setInterval(() => {
+    turboRemainingSec--;
+    if (turboRemainingSec <= 0) {
+      stopTurboTicker();
+      if (turboLabel) turboLabel.textContent = "Turbo 15m";
+      if (btnTurbo) btnTurbo.classList.remove("is-active");
+      showToast("Turbo complete, restoring normal mode");
+    } else {
+      updateTurboLabel();
+    }
+  }, 1000);
+}
+
+function stopTurboTicker() {
+  if (turboTicker) {
+    clearInterval(turboTicker);
+    turboTicker = null;
+  }
+}
+
 // Event Listeners for Single Unit Controls
-const btnPowerfulDetail = document.getElementById("btn-powerful");
-if (btnPowerfulDetail) {
-  attachTouchSafeClick(btnPowerfulDetail, () => {
+const btnTurboDetail = document.getElementById("btn-turbo");
+if (btnTurboDetail) {
+  attachTouchSafeClick(btnTurboDetail, () => {
     if (!activeDeviceId || !activeDeviceState) return;
     if (!activeDeviceState.power) {
-      showToast("Turn on AC before activating Powerful mode", true);
+      showToast("Turn on AC before activating Turbo", true);
       return;
     }
-    const currentAdv = pendingPatch.adv !== undefined ? pendingPatch.adv : (activeDeviceState.adv || (activeDeviceState.powerful ? "2" : ""));
-    const nextPowerful = currentAdv !== "2";
-    const nextAdv = nextPowerful ? "2" : "";
+    const isCurrentlyTurbo = !!activeDeviceState.turbo;
+    const nextTurbo = !isCurrentlyTurbo;
 
-    btnPowerfulDetail.classList.toggle("is-active", nextPowerful);
-    if (nextPowerful) {
-      labelModeSummary.textContent = "⚡ POWERFUL ACTIVE (20M)";
+    btnTurboDetail.classList.toggle("is-active", nextTurbo);
+    if (nextTurbo) {
+      turboRemainingSec = 900;
+      updateTurboLabel();
+      startTurboTicker();
+      labelModeSummary.textContent = "⚡ TURBO COOLING (15M)";
       dialGlow.style.opacity = "1.0";
-      showToast("⚡ Powerful 20-min boost engaged");
+      showToast("⚡ Turbo 15m blast engaged (18°C & Max Fan)");
     } else {
+      stopTurboTicker();
+      if (turboLabel) turboLabel.textContent = "Turbo 15m";
       labelModeSummary.textContent = `${(activeDeviceState.mode || "COOL").toUpperCase()} ACTIVE`;
       dialGlow.style.opacity = "0.7";
-      showToast("Powerful mode cancelled");
+      showToast("Turbo cancelled");
     }
 
-    queuePatch({ adv: nextAdv, powerful: nextPowerful }, 100);
+    queuePatch({ turbo: nextTurbo }, 100);
   });
 }
 
@@ -1389,7 +1435,7 @@ function renderDashboard() {
       </td>
       <td>
         <div>${statusBadge}</div>
-        <div style="margin-top:4px; font-size:0.78rem;">${powerLabel} • ${modeLabel} ${(dev.powerful || dev.adv === "2") ? '• <span class="diag-powerful-tag">⚡ 20m</span>' : ''}</div>
+        <div style="margin-top:4px; font-size:0.78rem;">${powerLabel} • ${modeLabel} ${dev.turbo ? '• <span class="diag-turbo-tag">⚡ Turbo</span>' : ''}</div>
       </td>
       <td style="font-weight:700; color:var(--accent-cyan); font-size:1rem;">${targetTemp}</td>
       <td>

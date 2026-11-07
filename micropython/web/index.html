@@ -93,17 +93,11 @@
                 </div>
                 <p class="card-subtitle" id="active-device-ip">192.168.1.104 • BRP072C42</p>
               </div>
-              <div class="card-header-actions">
-                <button id="btn-powerful" class="chip-btn chip-powerful" title="Toggle 20-Minute Native Powerful Mode">
-                  <span class="chip-icon">⚡</span>
-                  <span>Powerful</span>
-                </button>
-                <button id="btn-power" class="power-toggle" aria-label="Toggle Power">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                    <path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/>
-                  </svg>
-                </button>
-              </div>
+              <button id="btn-power" class="power-toggle" aria-label="Toggle Power">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                  <path d="M18.36 6.64a9 9 0 1 1-12.73 0M12 2v10"/>
+                </svg>
+              </button>
             </div>
 
             <div class="dial-container">
@@ -178,6 +172,17 @@
                   <button class="chip-btn chip-sm" data-swing="2" id="swing-2">Horiz</button>
                   <button class="chip-btn chip-sm" data-swing="3" id="swing-3">3D</button>
                 </div>
+              </div>
+            </div>
+
+            <!-- Extended Quick Boost Suite -->
+            <div class="control-section presets-section">
+              <label class="section-label">QUICK BOOST</label>
+              <div class="button-group presets-group">
+                <button class="chip-btn chip-turbo" id="btn-turbo" title="15-minute maximum chill at 18°C & Max Fan with auto-revert">
+                  <span class="chip-icon">⚡</span>
+                  <span id="turbo-label">Turbo 15m</span>
+                </button>
               </div>
             </div>
           </section>
