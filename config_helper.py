@@ -103,6 +103,8 @@ def run_cli_helper():
             print(f"  - Power:       {'ON' if state.get('power') else 'OFF'}")
             print(f"  - Room Temp:   {state.get('indoor_temp')} °C")
             print(f"  - Target Temp: {state.get('target_temp')} °C")
+            print(f"  - Firmware:    {state.get('firmware') or state.get('firmware_version') or '--'}")
+            print(f"  - Clock:       {state.get('device_clock') or state.get('ac_clock') or '--'}")
             print(f"  - Saved to:    {mgr.config_path}")
         else:
             print("  [WARNING] AC rejected the handshake (check the 13-digit key from the sticker photo).")

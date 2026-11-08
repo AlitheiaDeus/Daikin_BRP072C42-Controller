@@ -184,7 +184,8 @@ async def handle_client(reader, writer):
                         "sensor_info": device.query_endpoint("/aircon/get_sensor_info"),
                         "control_info": device.query_endpoint("/aircon/get_control_info"),
                         "model_info": device.query_endpoint("/aircon/get_model_info"),
-                        "week_power": device.query_endpoint("/aircon/get_week_power")
+                        "week_power": device.query_endpoint("/aircon/get_week_power"),
+                        "datetime_info": device.query_endpoint("/common/get_datetime")
                     }
                     await send_json(writer, telemetry)
                     return

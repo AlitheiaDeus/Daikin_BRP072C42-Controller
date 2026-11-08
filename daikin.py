@@ -77,6 +77,8 @@ class DaikinController:
         self._last_state = None
         self._last_ctrl = None
         self._last_runtime = 0
+        self._last_clock = ""
+        self._last_heavy_check = 0
         self._last_command_time = 0
 
     def get_cached_state(self) -> Optional[dict]:
@@ -102,15 +104,22 @@ class DaikinController:
             "indoor_temp": None,
             "outdoor_temp": None,
             "humidity": None,
+            "indoor_humidity": None,
             "compressor_freq": 0,
+            "cmpfreq": 0,
             "fan_rate": "A",
             "fan_dir": "0",
             "today_runtime_mins": 0,
+            "runtime_today": 0,
+            "runtime": 0,
             "device_clock": "",
+            "ac_clock": "",
             "mac": "",
             "firmware": "",
+            "firmware_version": "",
             "model_type": "aircon",
             "err": "0",
+            "error_code": 0,
             "turbo": False,
             "turbo_remaining_sec": 0,
         }
@@ -198,14 +207,20 @@ class DaikinController:
 
         # Query runtime & clock only periodically (every 60s) to keep tab switching instant (<300ms)
         now = time.time()
-        if not hasattr(self, "_last_heavy_check") or now - self._last_heavy_check > 60:
+        if (now - getattr(self, "_last_heavy_check", 0) > 60) or not getattr(self, "_last_clock", ""):
             self._last_heavy_check = now
             week_pwr = self.query_endpoint("/aircon/get_week_power")
             if week_pwr.get("ret") == "OK":
-                self._last_runtime = int(week_pwr.get("today_runtime", "0"))
+                try:
+                    self._last_runtime = int(week_pwr.get("today_runtime", "0"))
+                except Exception:
+                    pass
             dt = self.query_endpoint("/common/get_datetime")
+            if dt.get("ret") != "OK":
+                dt = self.query_endpoint("/common/get_datetime?cur=")
             if dt.get("ret") == "OK":
-                self._last_clock = dt.get("cur", "")
+                raw_cur = dt.get("cur", "")
+                self._last_clock = urllib.parse.unquote(raw_cur) if raw_cur else ""
 
         raw_name = self._basic_cache.get("name") if self._basic_cache else None
         adapter_name = urllib.parse.unquote(raw_name) if raw_name else ""
@@ -266,6 +281,15 @@ class DaikinController:
         # Optimistic lease: if a user command was sent within last 4s, keep user's control values
         recent_cmd = (time.time() - getattr(self, "_last_command_time", 0)) < 4.0
 
+        # Format firmware version cleanly (e.g. "1_16_0" -> "1.16.0")
+        raw_ver = self._basic_cache.get("ver", "") if self._basic_cache else ""
+        firmware = raw_ver.replace("_", ".") if raw_ver else ""
+        clock = getattr(self, "_last_clock", "")
+        runtime = self._last_runtime
+        hum = float(sensors.get("hhum", "0")) if sensors.get("hhum") not in ("--", None, "") else None
+        cmp_freq = int(sensors.get("cmpfreq", "0")) if sensors.get("cmpfreq") not in ("--", None, "") else 0
+        err_val = ctrl.get("err", sensors.get("err", "0"))
+
         state = {
             "id": self.device_id,
             "name": self.name or adapter_name or self.device_id,
@@ -284,18 +308,25 @@ class DaikinController:
             "target_temp": (self._last_state.get("target_temp") if recent_cmd and self._last_state else _parse_temp(ctrl.get("stemp"), 25.0)),
             "indoor_temp": float(sensors.get("htemp", "0.0")) if sensors.get("htemp") not in ("--", None) else None,
             "outdoor_temp": float(sensors.get("otemp", "0.0")) if sensors.get("otemp") not in ("--", None) else None,
-            "humidity": float(sensors.get("hhum", "0")) if sensors.get("hhum") not in ("--", None) else None,
-            "compressor_freq": int(sensors.get("cmpfreq", "0")) if sensors.get("cmpfreq") not in ("--", None) else 0,
+            "humidity": hum,
+            "indoor_humidity": hum,
+            "compressor_freq": cmp_freq,
+            "cmpfreq": cmp_freq,
             "fan_rate": (self._last_state.get("fan_rate") if recent_cmd and self._last_state else ctrl.get("f_rate", "A")),
             "fan_dir": (self._last_state.get("fan_dir") if recent_cmd and self._last_state else ctrl.get("f_dir", "0")),
-            "today_runtime_mins": self._last_runtime,
+            "today_runtime_mins": runtime,
+            "runtime_today": runtime,
+            "runtime": runtime,
             "turbo": is_turbo,
             "turbo_remaining_sec": remaining,
-            "device_clock": getattr(self, "_last_clock", ""),
+            "device_clock": clock,
+            "ac_clock": clock,
             "mac": self._basic_cache.get("mac", "") if self._basic_cache else "",
-            "firmware": self._basic_cache.get("ver", "") if self._basic_cache else "",
+            "firmware": firmware or raw_ver,
+            "firmware_version": firmware or raw_ver,
             "model_type": self._basic_cache.get("type", "aircon") if self._basic_cache else "aircon",
-            "err": ctrl.get("err", sensors.get("err", "0")),
+            "err": err_val,
+            "error_code": err_val,
             "raw_ctrl": ctrl,
             "raw_sensors": sensors
         }
@@ -591,19 +622,40 @@ if __name__ == "__main__":
     target_ac = devices[0]
     print(f"Loaded {len(devices)} device slot(s). Target: {target_ac.name} ({target_ac.ip})")
 
-    if len(sys.argv) > 1 and sys.argv[1].lower() == "dump":
-        print(json.dumps(target_ac.get_full_state(), indent=2))
+    if len(sys.argv) > 1 and sys.argv[1].lower() in ("dump", "raw"):
+        dump_data = {
+            "state": target_ac.get_full_state(),
+            "raw_endpoints": {
+                "basic_info": target_ac.query_endpoint("/common/basic_info"),
+                "sensor_info": target_ac.query_endpoint("/aircon/get_sensor_info"),
+                "control_info": target_ac.query_endpoint("/aircon/get_control_info"),
+                "model_info": target_ac.query_endpoint("/aircon/get_model_info"),
+                "week_power": target_ac.query_endpoint("/aircon/get_week_power"),
+                "datetime_info": target_ac.query_endpoint("/common/get_datetime"),
+            }
+        }
+        print(json.dumps(dump_data, indent=2))
         sys.exit(0)
 
     state = target_ac.get_full_state()
     print("\n--- Current Status ---")
-    print(f"Name:         {state.get('name')}")
-    print(f"Status:       {state.get('status')}")
-    print(f"Power:        {'ON' if state.get('power') else 'OFF'}")
-    print(f"Target Temp:  {state.get('target_temp')} °C")
-    print(f"Indoor Temp:  {state.get('indoor_temp')} °C")
-    print(f"Outdoor Temp: {state.get('outdoor_temp')} °C")
-    print(f"Mode:         {state.get('mode')}")
-    print(f"Fan Speed:    {state.get('fan_rate')}")
-    print(f"Vane Swing:   {state.get('fan_dir')}")
+    print(f"Name:           {state.get('name')}")
+    print(f"Status:         {state.get('status')}")
+    print(f"Power:          {'ON' if state.get('power') else 'OFF'}")
+    print(f"Target Temp:    {state.get('target_temp')} °C")
+    print(f"Indoor Temp:    {state.get('indoor_temp')} °C")
+    print(f"Outdoor Temp:   {state.get('outdoor_temp')} °C")
+    hum = state.get('humidity')
+    print(f"Indoor Hum:     {hum if hum is not None else '--'} %")
+    print(f"Compressor:     {state.get('compressor_freq')} Hz")
+    print(f"Mode:           {state.get('mode')}")
+    print(f"Fan Speed:      {state.get('fan_rate')}")
+    print(f"Vane Swing:     {state.get('fan_dir')}")
+    runtime = state.get('today_runtime_mins', 0)
+    hours, mins = divmod(runtime, 60)
+    print(f"Today Runtime:  {runtime} mins ({hours}h {mins}m)")
+    print(f"Internal Clock: {state.get('device_clock') or '--'}")
+    print(f"Firmware:       {state.get('firmware') or '--'}")
+    print(f"MAC Address:    {state.get('mac') or '--'}")
+    print(f"Diagnostic Err: {state.get('err', '0')}")
     print("----------------------\n")

@@ -196,15 +196,22 @@ class DaikinController:
             "indoor_temp": None,
             "outdoor_temp": None,
             "humidity": None,
+            "indoor_humidity": None,
             "compressor_freq": 0,
+            "cmpfreq": 0,
             "fan_rate": "A",
             "fan_dir": "0",
             "today_runtime_mins": 0,
+            "runtime_today": 0,
+            "runtime": 0,
             "device_clock": "",
+            "ac_clock": "",
             "mac": "",
             "firmware": "",
+            "firmware_version": "",
             "model_type": "aircon",
             "err": "0",
+            "error_code": 0,
             "turbo": False,
             "turbo_remaining_sec": 0,
         }
@@ -288,6 +295,22 @@ class DaikinController:
 
         self._last_ctrl = dict(ctrl)
 
+        now = time.time()
+        if (now - self._last_heavy_check > 60) or not self._last_clock or self._last_heavy_check == 0:
+            self._last_heavy_check = now
+            week_pwr = self.query_endpoint("/aircon/get_week_power")
+            if week_pwr.get("ret") == "OK":
+                try:
+                    self._last_runtime = int(week_pwr.get("today_runtime", "0"))
+                except Exception:
+                    pass
+            dt = self.query_endpoint("/common/get_datetime")
+            if dt.get("ret") != "OK":
+                dt = self.query_endpoint("/common/get_datetime?cur=")
+            if dt.get("ret") == "OK":
+                raw_cur = dt.get("cur", "")
+                self._last_clock = unquote(raw_cur) if raw_cur else ""
+
         raw_name = self._basic_cache.get("name") if self._basic_cache else None
         adapter_name = unquote(raw_name) if raw_name else ""
 
@@ -341,6 +364,14 @@ class DaikinController:
 
         recent_cmd = (time.time() - self._last_command_time) < 4.0
 
+        raw_ver = self._basic_cache.get("ver", "") if self._basic_cache else ""
+        firmware = raw_ver.replace("_", ".") if raw_ver else ""
+        clock = self._last_clock
+        runtime = self._last_runtime
+        hum = float(sensors.get("hhum", "0")) if sensors.get("hhum") not in ("--", None, "") else None
+        cmp_freq = int(sensors.get("cmpfreq", "0")) if sensors.get("cmpfreq") not in ("--", None, "") else 0
+        err_val = ctrl.get("err", sensors.get("err", "0"))
+
         state = {
             "id": self.device_id,
             "name": self.name or adapter_name or self.device_id,
@@ -359,18 +390,25 @@ class DaikinController:
             "target_temp": (self._last_state.get("target_temp") if recent_cmd and self._last_state else _parse_temp(ctrl.get("stemp"), 25.0)),
             "indoor_temp": float(sensors.get("htemp", "0.0")) if sensors.get("htemp") not in ("--", None) else None,
             "outdoor_temp": float(sensors.get("otemp", "0.0")) if sensors.get("otemp") not in ("--", None) else None,
-            "humidity": float(sensors.get("hhum", "0")) if sensors.get("hhum") not in ("--", None) else None,
-            "compressor_freq": int(sensors.get("cmpfreq", "0")) if sensors.get("cmpfreq") not in ("--", None) else 0,
+            "humidity": hum,
+            "indoor_humidity": hum,
+            "compressor_freq": cmp_freq,
+            "cmpfreq": cmp_freq,
             "fan_rate": (self._last_state.get("fan_rate") if recent_cmd and self._last_state else ctrl.get("f_rate", "A")),
             "fan_dir": (self._last_state.get("fan_dir") if recent_cmd and self._last_state else ctrl.get("f_dir", "0")),
-            "today_runtime_mins": self._last_runtime,
+            "today_runtime_mins": runtime,
+            "runtime_today": runtime,
+            "runtime": runtime,
             "turbo": is_turbo,
             "turbo_remaining_sec": remaining,
-            "device_clock": self._last_clock,
+            "device_clock": clock,
+            "ac_clock": clock,
             "mac": self._basic_cache.get("mac", "") if self._basic_cache else "",
-            "firmware": self._basic_cache.get("ver", "") if self._basic_cache else "",
+            "firmware": firmware or raw_ver,
+            "firmware_version": firmware or raw_ver,
             "model_type": self._basic_cache.get("type", "aircon") if self._basic_cache else "aircon",
-            "err": ctrl.get("err", sensors.get("err", "0")),
+            "err": err_val,
+            "error_code": err_val,
             "raw_ctrl": ctrl,
             "raw_sensors": sensors
         }

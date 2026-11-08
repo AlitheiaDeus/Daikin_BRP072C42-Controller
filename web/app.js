@@ -982,26 +982,44 @@ function renderActiveView(state) {
     ? `${state.outdoor_temp}<span class="stat-unit">°C</span>`
     : `--<span class="stat-unit">°C</span>`;
 
-  statHhum.innerHTML = state.indoor_humidity !== undefined && state.indoor_humidity !== null
-    ? `${state.indoor_humidity}<span class="stat-unit">%</span>`
+  const humVal = state.indoor_humidity !== undefined && state.indoor_humidity !== null
+    ? state.indoor_humidity
+    : state.humidity;
+  statHhum.innerHTML = humVal !== undefined && humVal !== null
+    ? `${humVal}<span class="stat-unit">%</span>`
     : `--<span class="stat-unit">%</span>`;
 
-  statCmpfreq.innerHTML = state.compressor_freq !== undefined && state.compressor_freq !== null
-    ? `${state.compressor_freq}<span class="stat-unit">Hz</span>`
+  const cmpFreqVal = state.compressor_freq !== undefined && state.compressor_freq !== null
+    ? state.compressor_freq
+    : state.cmpfreq;
+  statCmpfreq.innerHTML = cmpFreqVal !== undefined && cmpFreqVal !== null
+    ? `${cmpFreqVal}<span class="stat-unit">Hz</span>`
     : `--<span class="stat-unit">Hz</span>`;
 
-  statRuntime.innerHTML = state.runtime_today !== undefined && state.runtime_today !== null
-    ? `${state.runtime_today}<span class="stat-unit">m</span>`
+  const runtimeVal = state.runtime_today !== undefined && state.runtime_today !== null
+    ? state.runtime_today
+    : (state.today_runtime_mins !== undefined && state.today_runtime_mins !== null
+      ? state.today_runtime_mins
+      : state.runtime);
+  statRuntime.innerHTML = runtimeVal !== undefined && runtimeVal !== null
+    ? `${runtimeVal}<span class="stat-unit">m</span>`
     : `--<span class="stat-unit">m</span>`;
 
-  const errCode = state.error_code ?? 0;
+  const rawErr = state.error_code !== undefined ? state.error_code : (state.err !== undefined ? state.err : 0);
+  const errCode = (rawErr === "0" || rawErr === 0 || rawErr === "OK" || !rawErr) ? 0 : rawErr;
   statError.textContent = errCode === 0 ? "0 (Normal)" : `Code ${errCode}`;
   statError.className = errCode === 0 ? "stat-value stat-ok" : "stat-value stat-error";
 
   // Hardware specs
   hwMac.textContent = state.mac || "--";
-  hwFirmware.textContent = state.firmware_version || "--";
-  if (hwClock) hwClock.textContent = state.ac_clock || "--";
+
+  const fwVal = state.firmware_version || state.firmware;
+  hwFirmware.textContent = fwVal ? (fwVal.includes("_") ? fwVal.replace(/_/g, ".") : fwVal) : "--";
+
+  if (hwClock) {
+    const clkVal = state.ac_clock || state.device_clock;
+    hwClock.textContent = clkVal || "--";
+  }
 
   // Sync tab badge
   if (activeDeviceId) {
@@ -1392,11 +1410,22 @@ function renderDashboard() {
     const modeLabel = dev.mode ? `${modeIcon(dev.mode)} ${dev.mode.toUpperCase()}` : "--";
     const targetTemp = dev.target_temp !== undefined && dev.target_temp !== null ? `${Number(dev.target_temp).toFixed(1)}°C` : "--";
     const indoorTemp = dev.indoor_temp !== undefined && dev.indoor_temp !== null ? `${Number(dev.indoor_temp).toFixed(1)}°C` : "--";
-    const humidity = dev.humidity !== undefined && dev.humidity !== null ? `${dev.humidity}%` : "--";
+    const humidityVal = dev.humidity !== undefined && dev.humidity !== null ? dev.humidity : dev.indoor_humidity;
+    const humidity = humidityVal !== undefined && humidityVal !== null ? `${humidityVal}%` : "--";
     const outdoorTemp = dev.outdoor_temp !== undefined && dev.outdoor_temp !== null ? `${Number(dev.outdoor_temp).toFixed(1)}°C` : "--";
-    const cmpFreq = dev.cmpfreq !== undefined && dev.cmpfreq !== null ? `${dev.cmpfreq} Hz` : "--";
-    const runtime = dev.runtime !== undefined && dev.runtime !== null ? `${dev.runtime} m` : "--";
-    const errorText = dev.error && dev.error !== "0" && dev.error !== "Normal" ? `<span style="color:#ff5252; font-weight:700;">⚠️ ${dev.error}</span>` : `<span style="color:#00e676;">0 (Normal)</span>`;
+    const cmpFreqVal = dev.compressor_freq !== undefined && dev.compressor_freq !== null ? dev.compressor_freq : dev.cmpfreq;
+    const cmpFreq = cmpFreqVal !== undefined && cmpFreqVal !== null ? `${cmpFreqVal} Hz` : "--";
+    const runtimeVal = dev.today_runtime_mins !== undefined && dev.today_runtime_mins !== null
+      ? dev.today_runtime_mins
+      : (dev.runtime_today !== undefined && dev.runtime_today !== null ? dev.runtime_today : dev.runtime);
+    const runtime = runtimeVal !== undefined && runtimeVal !== null ? `${runtimeVal} m` : "--";
+    const rawErr = dev.err !== undefined ? dev.err : (dev.error_code !== undefined ? dev.error_code : dev.error);
+    const errorText = rawErr && rawErr !== "0" && rawErr !== 0 && rawErr !== "Normal" && rawErr !== "OK"
+      ? `<span style="color:#ff5252; font-weight:700;">⚠️ ${rawErr}</span>`
+      : `<span style="color:#00e676;">0 (Normal)</span>`;
+    const fwVal = dev.firmware || dev.firmware_version;
+    const fwDisplay = fwVal ? (fwVal.includes("_") ? fwVal.replace(/_/g, ".") : fwVal) : "";
+    const hwSub = [dev.mac || "BRP072C42", fwDisplay ? `v${fwDisplay}` : ""].filter(Boolean).join(" • ");
 
     tr.innerHTML = `
       <td>
@@ -1405,7 +1434,7 @@ function renderDashboard() {
       </td>
       <td>
         <div style="font-weight:600;">${dev.ip || "--"}</div>
-        <div class="diag-unit-sub font-mono">${dev.mac || "BRP072C42"}</div>
+        <div class="diag-unit-sub font-mono">${hwSub}</div>
       </td>
       <td>
         <div>${statusBadge}</div>
