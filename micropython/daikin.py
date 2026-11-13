@@ -1,11 +1,20 @@
-# daikin.py - MicroPython Daikin AC Controller Engine
+# daikin.py - Asynchronous MicroPython Daikin AC Controller Engine
+try:
+    import uasyncio as asyncio
+except ImportError:
+    import asyncio
 import json
 import time
-import socket
-import ssl
 import gc
-import urandom
+try:
+    import urandom
+except ImportError:
+    import random as urandom
+import config
 
+# ==============================================================================
+# Protocol Mappings & Helpers
+# ==============================================================================
 MODE_MAP = {
     "auto": "1",
     "dry": "2",
@@ -23,12 +32,19 @@ MODE_REV_MAP = {
     "6": "fan",
 }
 
+
 def generate_uuid():
     """Generate a random 32-character hexadecimal UUID string."""
-    return "".join(f"{urandom.getrandbits(8):02x}" for _ in range(16))
+    try:
+        return "".join(f"{urandom.getrandbits(8):02x}" for _ in range(16))
+    except Exception:
+        # Fallback if urandom is limited
+        import os
+        return "".join(f"{b:02x}" for b in os.urandom(16))
+
 
 def unquote(s):
-    """Decode percent-encoded URL string."""
+    """Decode percent-encoded URL string without external urllib dependencies."""
     if not s or "%" not in s:
         return s
     res = []
@@ -37,7 +53,7 @@ def unquote(s):
     while i < n:
         if s[i] == "%" and i + 2 < n:
             try:
-                res.append(chr(int(s[i+1:i+3], 16)))
+                res.append(chr(int(s[i + 1 : i + 3], 16)))
                 i += 3
                 continue
             except ValueError:
@@ -45,6 +61,7 @@ def unquote(s):
         res.append(s[i])
         i += 1
     return "".join(res)
+
 
 def _parse_temp(val, default=25.0):
     if val in ("--", "M", None, ""):
@@ -54,99 +71,103 @@ def _parse_temp(val, default=25.0):
     except (ValueError, TypeError):
         return default
 
-def daikin_http_request(ip, path, headers=None, port=443, use_ssl=True, timeout=2.5):
-    """Fast socket HTTP/HTTPS client with Content-Length cutoff for Daikin adapters."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.settimeout(timeout)
-    
-    try:
-        addr = socket.getaddrinfo(ip, port)[0][-1]
-        s.connect(addr)
-        
-        if use_ssl:
-            try:
-                ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-                ctx.verify_mode = ssl.CERT_NONE
-                s = ctx.wrap_socket(s, server_hostname=ip)
-            except (AttributeError, TypeError):
-                try:
-                    s = ssl.wrap_socket(s, cert_reqs=ssl.CERT_NONE, server_hostname=ip)
-                except (TypeError, ValueError):
-                    s = ssl.wrap_socket(s)
 
-        req = f"GET {path} HTTP/1.1\r\nHost: {ip}\r\nConnection: close\r\n"
+# ==============================================================================
+# Non-Blocking Asynchronous HTTP/HTTPS Client
+# ==============================================================================
+async def async_daikin_request(ip, path, headers=None, port=443, use_ssl=True, timeout=3.0):
+    """Non-blocking socket stream HTTP/HTTPS client tailored for Daikin adapters.
+    
+    Reads headers asynchronously, detects Content-Length, and cuts off body reading
+    immediately to eliminate the socket EOF timeout latency.
+    """
+    ssl_ctx = None
+    if use_ssl:
+        try:
+            import ssl
+            try:
+                ssl_ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+                ssl_ctx.check_hostname = False
+                ssl_ctx.verify_mode = ssl.CERT_NONE
+            except (AttributeError, TypeError):
+                ssl_ctx = True
+        except ImportError:
+            use_ssl = False
+
+    reader = None
+    writer = None
+    try:
+        # 1. Establish asynchronous stream connection with timeout guard
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(ip, port, ssl=ssl_ctx),
+            timeout=timeout
+        )
+
+        # 2. Transmit HTTP request header (HTTP/1.0 matches Daikin embedded web server)
+        req = f"GET {path} HTTP/1.0\r\nHost: {ip}\r\nConnection: close\r\n"
         if headers:
             for k, v in headers.items():
                 req += f"{k}: {v}\r\n"
         req += "\r\n"
-        s.write(req.encode("utf-8"))
+        writer.write(req.encode("utf-8"))
+        await writer.drain()
 
-        raw = b""
-        header_b = b""
-        body_b = b""
-        content_length = None
+        # 3. Asynchronously read HTTP status line
+        first_line = await asyncio.wait_for(reader.readline(), timeout=timeout)
+        if not first_line:
+            return 500, ""
 
-        # 1. Read until headers complete
-        while True:
-            chunk = s.read(256)
-            if not chunk:
-                break
-            raw += chunk
-            if b"\r\n\r\n" in raw:
-                header_b, body_b = raw.split(b"\r\n\r\n", 1)
-                break
-            elif b"\n\n" in raw:
-                header_b, body_b = raw.split(b"\n\n", 1)
-                break
-
-        if not header_b and raw:
-            header_b = raw
-
-        # 2. Extract status code and Content-Length
         status_code = 200
-        first_line = header_b.split(b"\n")[0]
-        toks = first_line.split(b" ")
-        if len(toks) >= 2 and toks[1].isdigit():
-            status_code = int(toks[1])
+        tokens = first_line.decode("utf-8", "ignore").strip().split(" ")
+        if len(tokens) >= 2 and tokens[1].isdigit():
+            status_code = int(tokens[1])
 
-        for line in header_b.split(b"\n"):
-            line_clean = line.strip().lower()
-            if line_clean.startswith(b"content-length:"):
+        # 4. Asynchronously read headers to determine Content-Length
+        content_length = None
+        while True:
+            hline = await asyncio.wait_for(reader.readline(), timeout=timeout)
+            if not hline or hline in (b"\r\n", b"\n"):
+                break
+            line_str = hline.decode("utf-8", "ignore").strip().lower()
+            if line_str.startswith("content-length:"):
                 try:
-                    content_length = int(line_clean.split(b":", 1)[1].strip())
+                    content_length = int(line_str.split(":", 1)[1].strip())
                 except ValueError:
                     pass
 
-        # 3. Read body up to Content-Length immediately (avoids 4s socket timeout freeze!)
-        if content_length is not None:
-            while len(body_b) < content_length:
-                needed = content_length - len(body_b)
-                chunk = s.read(min(256, needed))
+        # 5. Read body up to Content-Length immediately (zero blocking!)
+        body_bytes = b""
+        if content_length is not None and content_length > 0:
+            body_bytes = await asyncio.wait_for(
+                reader.readexactly(content_length),
+                timeout=timeout
+            )
+        else:
+            # Fallback if no Content-Length provided
+            while True:
+                chunk = await asyncio.wait_for(reader.read(256), timeout=timeout)
                 if not chunk:
                     break
-                body_b += chunk
-        else:
-            while True:
-                try:
-                    chunk = s.read(256)
-                    if not chunk:
-                        break
-                    body_b += chunk
-                except (socket.timeout, OSError):
-                    break
+                body_bytes += chunk
 
-        body = body_b.decode("utf-8", "ignore")
+        body = body_bytes.decode("utf-8", "ignore")
         return status_code, body
+
     finally:
-        try:
-            s.close()
-        except Exception:
-            pass
-        gc.collect()
+        if writer:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
 
 
-
+# ==============================================================================
+# Async Daikin Unit Controller
+# ==============================================================================
 class DaikinController:
+    """Non-blocking asynchronous controller for a single Daikin AC unit."""
+
     def __init__(self, device_id, name, ip, key, client_uuid=""):
         self.device_id = device_id
         self.name = name
@@ -160,6 +181,7 @@ class DaikinController:
         self._model_cache = None
         self._last_state = None
         self._last_ctrl = None
+        self._last_sensors = None
         self._last_runtime = 0
         self._last_clock = ""
         self._last_command_time = 0
@@ -224,65 +246,69 @@ class DaikinController:
                 result[k] = v
         return result
 
-    def _request(self, path):
+    async def _request(self, path):
         headers = {"X-Daikin-uuid": self.uuid}
         try:
-            status, body = daikin_http_request(
-                self.ip, path, headers=headers, port=self.port, use_ssl=self.use_ssl, timeout=2.0
+            status, body = await async_daikin_request(
+                self.ip, path, headers=headers, port=self.port, use_ssl=self.use_ssl, timeout=config.SOCKET_TIMEOUT_SECS
             )
             return status, self._parse_response(body)
-        except Exception as e:
-            # If HTTPS fails initially, attempt fallback to plain HTTP (port 80)
-            if self.use_ssl and not self._last_state:
-                try:
-                    status, body = daikin_http_request(
-                        self.ip, path, headers=headers, port=80, use_ssl=False, timeout=2.0
-                    )
-                    self.use_ssl = False
-                    self.port = 80
-                    return status, self._parse_response(body)
-                except Exception:
-                    pass
+        except (OSError, asyncio.TimeoutError) as e:
             return 500, {"ret": "ERROR", "error": str(e)}
 
-    def register(self):
+    async def register(self):
         if not self.is_configured:
             return False
         path = f"/common/register_terminal?key={self.key}"
-        status, parsed = self._request(path)
+        status, parsed = await self._request(path)
         return parsed.get("ret") == "OK"
 
-    def query_endpoint(self, path):
+    async def query_endpoint(self, path):
         if not self.is_configured:
             return {"ret": "UNCONFIGURED"}
 
-        status, parsed = self._request(path)
+        status, parsed = await self._request(path)
         if parsed.get("ret") in ("AUTH_FAIL", "ADV_NG") or status in (401, 403):
             print(f"[{self.name or self.device_id}] Auth required. Registering key...")
-            if self.register():
-                status, parsed = self._request(path)
+            if await self.register():
+                status, parsed = await self._request(path)
         return parsed
 
-    def get_full_state(self):
+    async def get_full_state(self, deep=False):
+        """Asynchronously query telemetry endpoints and synthesize full unit state."""
         if not self.is_configured:
             return {
                 "id": self.device_id,
                 "name": self.name,
                 "ip": self.ip,
                 "configured": False,
-                "status": "unconfigured"
+                "status": "unconfigured",
             }
 
-        sensors = self.query_endpoint("/aircon/get_sensor_info")
-        ctrl = self.query_endpoint("/aircon/get_control_info")
+        if deep:
+            sensors = await self.query_endpoint("/aircon/get_sensor_info")
+            await asyncio.sleep_ms(50)
+            if sensors.get("ret") == "OK":
+                self._last_sensors = dict(sensors)
+            elif self._last_sensors:
+                sensors = self._last_sensors
+        else:
+            sensors = self._last_sensors or (self._last_state.get("raw_sensors") if self._last_state else None) or {}
 
-        if not self._basic_cache or self._basic_cache.get("ret") != "OK":
-            self._basic_cache = self.query_endpoint("/common/basic_info")
-        if not self._model_cache or self._model_cache.get("ret") != "OK":
-            self._model_cache = self.query_endpoint("/aircon/get_model_info")
+        ctrl = await self.query_endpoint("/aircon/get_control_info")
+        await asyncio.sleep_ms(50)
+
+        if deep:
+            if not self._basic_cache or self._basic_cache.get("ret") != "OK":
+                self._basic_cache = await self.query_endpoint("/common/basic_info")
+                await asyncio.sleep_ms(50)
+            if not self._model_cache or self._model_cache.get("ret") != "OK":
+                self._model_cache = await self.query_endpoint("/aircon/get_model_info")
+                await asyncio.sleep_ms(50)
 
         if ctrl.get("ret") != "OK":
             if self._last_state:
+                self._last_state["status"] = "offline"
                 return self._last_state
             return {
                 "id": self.device_id,
@@ -290,23 +316,25 @@ class DaikinController:
                 "ip": self.ip,
                 "configured": True,
                 "status": "offline",
-                "error": ctrl.get("error", "Unit not reachable")
+                "error": ctrl.get("error", "Unit not reachable"),
             }
 
         self._last_ctrl = dict(ctrl)
 
-        now = time.time()
-        if (now - self._last_heavy_check > 60) or not self._last_clock or self._last_heavy_check == 0:
-            self._last_heavy_check = now
-            week_pwr = self.query_endpoint("/aircon/get_week_power")
+        if deep:
+            self._last_heavy_check = time.time()
+            week_pwr = await self.query_endpoint("/aircon/get_week_power")
+            await asyncio.sleep_ms(50)
             if week_pwr.get("ret") == "OK":
                 try:
                     self._last_runtime = int(week_pwr.get("today_runtime", "0"))
                 except Exception:
                     pass
-            dt = self.query_endpoint("/common/get_datetime")
+            dt = await self.query_endpoint("/common/get_datetime")
+            await asyncio.sleep_ms(50)
             if dt.get("ret") != "OK":
-                dt = self.query_endpoint("/common/get_datetime?cur=")
+                dt = await self.query_endpoint("/common/get_datetime?cur=")
+                await asyncio.sleep_ms(50)
             if dt.get("ret") == "OK":
                 raw_cur = dt.get("cur", "")
                 self._last_clock = unquote(raw_cur) if raw_cur else ""
@@ -328,9 +356,9 @@ class DaikinController:
         m_type = model_info.get("type", "")
         heat_l = model_info.get("heat_l")
         has_heat = (
-            m_type != "C" and 
-            heat_l not in (None, "", "0", "NOTSUPPORT", "NA") and 
-            bool(heat_l)
+            m_type != "C"
+            and heat_l not in (None, "", "0", "NOTSUPPORT", "NA")
+            and bool(heat_l)
         )
         if has_heat:
             supported_modes.append("heat")
@@ -350,7 +378,7 @@ class DaikinController:
             if now >= restore.get("expire_at", 0):
                 self._turbo_restore = None
                 try:
-                    self.update_settings(
+                    await self.update_settings(
                         target_temp=restore.get("temp", 25.0),
                         fan_rate=restore.get("fan", "A")
                     )
@@ -361,8 +389,7 @@ class DaikinController:
                 remaining = int(restore["expire_at"] - now)
 
         cool_h = _parse_temp(model_info.get("cool_h"), 32.0)
-
-        recent_cmd = (time.time() - self._last_command_time) < 4.0
+        recent_cmd = (time.time() - self._last_command_time) < 8.0
 
         raw_ver = self._basic_cache.get("ver", "") if self._basic_cache else ""
         firmware = raw_ver.replace("_", ".") if raw_ver else ""
@@ -410,20 +437,19 @@ class DaikinController:
             "err": err_val,
             "error_code": err_val,
             "raw_ctrl": ctrl,
-            "raw_sensors": sensors
+            "raw_sensors": sensors,
         }
         self._last_state = state
         return state
 
-    def update_settings(self, **kwargs):
+    async def update_settings(self, **kwargs):
+        """Send setting updates using single-write async optimization and return synthetic state."""
         if not self.is_configured:
             return {"ret": "UNCONFIGURED", "error": "Device not configured"}
 
-        self._last_command_time = time.time()
-
         current = self._last_ctrl
         if not current or current.get("ret") != "OK":
-            current = self.query_endpoint("/aircon/get_control_info")
+            current = await self.query_endpoint("/aircon/get_control_info")
             if current.get("ret") == "OK":
                 self._last_ctrl = dict(current)
             else:
@@ -444,7 +470,7 @@ class DaikinController:
                     self._turbo_restore = {
                         "temp": _parse_temp(current.get("stemp"), 25.0),
                         "fan": current.get("f_rate", "A"),
-                        "expire_at": time.time() + 900
+                        "expire_at": time.time() + 900,
                     }
                 min_t = self._last_state.get("min_temp", 18.0) if self._last_state else 18.0
                 payload["stemp"] = f"{float(min_t):.1f}"
@@ -458,7 +484,12 @@ class DaikinController:
                     payload["f_rate"] = str(restore.get("fan", "A"))
                     self._turbo_restore = None
         else:
-            if ("target_temp" in kwargs or "fan_rate" in kwargs or "stemp" in kwargs or "f_rate" in kwargs) and getattr(self, "_turbo_restore", None):
+            if (
+                "target_temp" in kwargs
+                or "fan_rate" in kwargs
+                or "stemp" in kwargs
+                or "f_rate" in kwargs
+            ) and getattr(self, "_turbo_restore", None):
                 self._turbo_restore = None
 
         if "power" in kwargs:
@@ -499,12 +530,13 @@ class DaikinController:
         q_parts = [f"{k}={payload[k]}" for k in payload]
         path = f"/aircon/set_control_info?{'&'.join(q_parts)}"
 
-        status, parsed = self._request(path)
+        status, parsed = await self._request(path)
         if parsed.get("ret") in ("AUTH_FAIL", "ADV_NG") or status in (401, 403):
-            if self.register():
-                status, parsed = self._request(path)
+            if await self.register():
+                status, parsed = await self._request(path)
 
         if parsed.get("ret") == "OK":
+            self._last_command_time = time.time()
             if not self._last_ctrl:
                 self._last_ctrl = {}
             self._last_ctrl.update(payload)
@@ -520,7 +552,9 @@ class DaikinController:
             self._last_state["fan_dir"] = payload["f_dir"]
             restore = getattr(self, "_turbo_restore", None)
             self._last_state["turbo"] = bool(restore)
-            self._last_state["turbo_remaining_sec"] = max(0, int(restore["expire_at"] - time.time())) if restore else 0
+            self._last_state["turbo_remaining_sec"] = (
+                max(0, int(restore["expire_at"] - time.time())) if restore else 0
+            )
             self._last_state["raw_ctrl"] = dict(self._last_ctrl)
             synth = dict(self._last_state)
             synth["daikin_res"] = parsed
@@ -529,8 +563,13 @@ class DaikinController:
         return parsed
 
 
+# ==============================================================================
+# Device Manager
+# ==============================================================================
 class DaikinDeviceManager:
-    def __init__(self, config_path="daikin_config.json", cache_path="devices_cache.json"):
+    """Manages the collection of configured Daikin units and flash persistence."""
+
+    def __init__(self, config_path=config.CONFIG_FILE, cache_path=config.CACHE_FILE):
         self.config_path = config_path
         self.cache_path = cache_path
         self.devices = {}
@@ -539,40 +578,29 @@ class DaikinDeviceManager:
 
     def load_cache(self):
         """Restore last known state from flash cache so temperatures are instant on boot."""
-        try:
-            with open(self.cache_path, "r") as f:
-                cached = json.load(f)
-                for dev_id, state in cached.items():
-                    if dev_id in self.devices and state:
-                        self.devices[dev_id]._last_state = state
-                        if "raw_ctrl" in state:
-                            self.devices[dev_id]._last_ctrl = state.get("raw_ctrl", {})
-        except Exception:
-            pass
+        cached = config.load_cache(self.cache_path)
+        for dev_id, state in cached.items():
+            if dev_id in self.devices and state:
+                self.devices[dev_id]._last_state = state
+                if "raw_ctrl" in state:
+                    self.devices[dev_id]._last_ctrl = state.get("raw_ctrl", {})
+                if "raw_sensors" in state:
+                    self.devices[dev_id]._last_sensors = state.get("raw_sensors", {})
 
     def save_cache(self):
         """Persist current states to flash so subsequent reboots are instant."""
-        try:
-            cache_data = {}
-            for dev_id, dev in self.devices.items():
-                if dev._last_state:
-                    cache_data[dev_id] = dev._last_state
-            if cache_data:
-                with open(self.cache_path, "w") as f:
-                    json.dump(cache_data, f)
-        except Exception:
-            pass
+        cache_data = {}
+        for dev_id, dev in self.devices.items():
+            if dev._last_state:
+                cache_data[dev_id] = dev._last_state
+        if cache_data:
+            config.save_cache(cache_data, self.cache_path)
 
     def load_config(self):
-        try:
-            with open(self.config_path, "r") as f:
-                cfg = json.load(f)
-        except Exception:
-            return
-
+        devices_raw = config.load_config(self.config_path)
         updated = False
-        loaded_devices = {}
-        for dev_data in cfg.get("devices", []):
+        loaded = {}
+        for dev_data in devices_raw:
             dev_id = dev_data.get("id")
             if not dev_id:
                 continue
@@ -592,11 +620,11 @@ class DaikinDeviceManager:
                 name=name,
                 ip=ip,
                 key=key,
-                client_uuid=client_uuid
+                client_uuid=client_uuid,
             )
-            loaded_devices[dev_id] = ctrl
+            loaded[dev_id] = ctrl
 
-        self.devices = loaded_devices
+        self.devices = loaded
         if updated:
             self.save_config()
 
@@ -608,13 +636,9 @@ class DaikinDeviceManager:
                 "name": dev.name,
                 "ip": dev.ip,
                 "key": dev.key,
-                "uuid": dev.uuid
+                "uuid": dev.uuid,
             })
-        try:
-            with open(self.config_path, "w") as f:
-                json.dump({"devices": device_list}, f)
-        except Exception as e:
-            print(f"[Config Save Error] {e}")
+        config.save_config(device_list, self.config_path)
 
     def get_device(self, dev_id):
         return self.devices.get(dev_id)
@@ -655,7 +679,7 @@ class DaikinDeviceManager:
                 name=name or f"Daikin AC ({ip})",
                 ip=ip,
                 key=key,
-                client_uuid=generate_uuid()
+                client_uuid=generate_uuid(),
             )
             self.devices[dev_id] = ctrl
 
@@ -669,12 +693,13 @@ class DaikinDeviceManager:
             return True
         return False
 
-    def poll_all(self):
+    async def poll_all(self):
+        """Asynchronously poll all configured units with cooperative yielding."""
         for ctrl in self.devices.values():
             if ctrl.is_configured:
                 try:
-                    ctrl.get_full_state()
+                    await ctrl.get_full_state()
                 except Exception as e:
                     print(f"[{ctrl.name}] Poll error: {e}")
-                time.sleep(0.1)
+                await asyncio.sleep(0.1)
                 gc.collect()

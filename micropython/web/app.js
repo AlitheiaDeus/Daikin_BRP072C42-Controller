@@ -47,6 +47,11 @@ const SYNC_INTERVAL_SEC = 15;
 let syncCountdown = SYNC_INTERVAL_SEC;
 let countdownTimer = null;
 
+// Desktop 2-minute inactivity guard
+const IDLE_TIMEOUT_MS = 120000;
+let isIdle = false;
+let idleTimer = null;
+
 // DOM Elements
 const deviceTabsContainer = document.getElementById("device-tabs");
 const loadingState = document.getElementById("loading-state");
@@ -143,8 +148,44 @@ function setStatus(type, message) {
   if (statusText) statusText.textContent = message;
   if (statusPulse) {
     statusPulse.className = "status-pulse";
-    if (type === "busy") statusPulse.classList.add("status-busy");
-    else if (type === "error") statusPulse.classList.add("status-error");
+    if (type === "busy") {
+      statusPulse.classList.add("status-busy");
+      statusPulse.style.opacity = "";
+    } else if (type === "error") {
+      statusPulse.classList.add("status-error");
+      statusPulse.style.opacity = "";
+    } else if (type === "idle") {
+      statusPulse.style.opacity = "0.4";
+    } else {
+      statusPulse.style.opacity = "";
+    }
+  }
+}
+
+// Reset 2-minute inactivity timer
+function resetIdleTimer(triggerFetch = true) {
+  const wasIdle = isIdle;
+  isIdle = false;
+  if (idleTimer) clearTimeout(idleTimer);
+  idleTimer = setTimeout(() => {
+    isIdle = true;
+    if (!isBusy) {
+      setStatus("idle", "Idle (Paused)");
+    }
+  }, IDLE_TIMEOUT_MS);
+
+  if (wasIdle && triggerFetch) {
+    if (!isUpdating) {
+      if (currentView === "overview") {
+        fetchDevices(true);
+      } else if (activeDeviceId && currentView === "detail") {
+        loadDeviceState(activeDeviceId, true);
+      } else {
+        startCountdown();
+      }
+    } else {
+      startCountdown();
+    }
   }
 }
 
@@ -171,12 +212,23 @@ function stopCountdown() {
 function startCountdown() {
   stopCountdown();
   syncCountdown = SYNC_INTERVAL_SEC;
-  if (!isBusy) {
+  if (!isBusy && !isIdle) {
     setStatus("online", `Live (Sync in ${syncCountdown}s)`);
   }
 
   countdownTimer = setInterval(() => {
-    if (document.hidden || isBusy || isUpdating || inFlightRequest || debounceTimer || Object.keys(pendingPatch).length > 0) return;
+    if (
+      document.hidden ||
+      isIdle ||
+      isBusy ||
+      isUpdating ||
+      inFlightRequest ||
+      debounceTimer ||
+      Object.keys(pendingPatch).length > 0 ||
+      Object.keys(devicePendingTemp).length > 0 ||
+      Object.keys(deviceDebounceTimers).length > 0 ||
+      Object.values(deviceInFlight).some(Boolean)
+    ) return;
     syncCountdown--;
     if (syncCountdown <= 0) {
       syncCountdown = SYNC_INTERVAL_SEC;
@@ -706,7 +758,7 @@ function nudgeDeviceTemp(deviceId, delta) {
   deviceDebounceTimers[deviceId] = setTimeout(() => {
     delete deviceDebounceTimers[deviceId];
     flushPooledTemp(deviceId);
-  }, 750);
+  }, 400);
 }
 
 // Flush Accumulated Pooled Temperature to Server
@@ -945,10 +997,13 @@ function renderActiveView(state) {
     dialGlow.style.opacity = "0.15";
   }
 
-  // Target Temp
-  if (state.target_temp !== undefined && state.target_temp !== null) {
-    const num = Number(state.target_temp);
-    valTargetTemp.textContent = !isNaN(num) ? num.toFixed(1) : String(state.target_temp);
+  // Target Temp (preserve unconfirmed optimistic dial steps)
+  const effectiveTemp = devicePendingTemp[state.id] !== undefined
+    ? devicePendingTemp[state.id]
+    : state.target_temp;
+  if (effectiveTemp !== undefined && effectiveTemp !== null) {
+    const num = Number(effectiveTemp);
+    valTargetTemp.textContent = !isNaN(num) ? num.toFixed(1) : String(effectiveTemp);
   } else {
     valTargetTemp.textContent = "24.0";
   }
@@ -1681,13 +1736,21 @@ function renderDiscoveredUnits(units) {
   });
 }
 
+// Track user activity for 2-minute desktop idle guard
+["pointerdown", "keydown", "wheel"].forEach(evt => {
+  document.addEventListener(evt, () => resetIdleTimer(true), { passive: true });
+});
+
 // Auto-refresh active AC when tab is restored from background
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && !isUpdating) {
-    if (currentView === "overview") {
-      fetchDevices(true);
-    } else if (activeDeviceId && currentView === "detail") {
-      loadDeviceState(activeDeviceId, true);
+  if (!document.hidden) {
+    resetIdleTimer(false);
+    if (!isUpdating) {
+      if (currentView === "overview") {
+        fetchDevices(true);
+      } else if (activeDeviceId && currentView === "detail") {
+        loadDeviceState(activeDeviceId, true);
+      }
     }
   }
 });
@@ -1720,4 +1783,5 @@ if (currentHash === "#dashboard") {
 }
 
 // 4. Silent background fetch from server RAM cache to reconcile fresh state
+resetIdleTimer(false);
 fetchDevices(true);

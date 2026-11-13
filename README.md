@@ -97,21 +97,28 @@ flowchart TD
     HTTPSChannel -->|"Control & Telemetry"| AC2
     HTTPSChannel -->|"Control & Telemetry"| AC3
 ```
-
 ```text
 DAIKIN_AC/
-├── daikin.py                   # Core controller library & CLI tool
-├── server.py                   # Lightweight HTTP & REST API server
-├── discover.py                 # UDP broadcast scanner for local Daikin units
+├── daikin.py                   # Desktop controller library & CLI tool
+├── server.py                   # Desktop ThreadingHTTPServer & REST API
+├── discover.py                 # Desktop UDP broadcast scanner
 ├── config_helper.py            # Interactive non-sequential CLI pairing helper
 ├── daikin_config.example.json  # Configuration template
 ├── daikin_config.json          # Active configuration (Git-ignored)
+├── deploy_ota.example.ps1      # Template for the wireless WebREPL deployer (copy to scripts/, git-ignored)
+├── micropython/                # MicroPython ESP32 Asynchronous Firmware
+│   ├── boot.py                 # Boot sequence, Wi-Fi initialization & WebREPL
+│   ├── config.py               # Central configuration & timing constants
+│   ├── daikin.py               # Non-blocking async Daikin engine (asyncio streams)
+│   ├── main.py                 # uasyncio HTTP server, decoupled poller & GC task
+│   ├── discover.py             # Cooperative non-blocking UDP discovery
+│   ├── daikin_config.json      # Unit configuration file
+│   └── web/                    # Pre-compressed web assets (.html/.css/.js + .gz)
 └── web/
     ├── index.html              # Dashboard markup
     ├── style.css               # Modern glassmorphism UI styles
     └── app.js                  # Frontend state machine & polling engine
 ```
-
 ---
 
 ## Quick Start
@@ -123,7 +130,6 @@ DAIKIN_AC/
   ```bash
   pip install requests urllib3
   ```
-
 ### 2. Pairing & Setup (Zero Manual JSON Editing)
 
 You can pair and test your units in **any order** without manually editing JSON files:
@@ -164,7 +170,6 @@ Start the local server:
 ```bash
 python server.py
 ```
-
 - **Local Access**: Open [http://localhost:8080](http://localhost:8080) in your browser.
 - **LAN / Mobile Access**: Open `http://<YOUR_PC_LAN_IP>:8080` on any phone or tablet on the same Wi-Fi network.
 
@@ -175,14 +180,27 @@ Inspect current status directly from the terminal:
 ```bash
 python daikin.py
 ```
-
 Dump raw diagnostic JSON telemetry:
 
 ```bash
 python daikin.py dump
 ```
+---
+
 
 ---
+
+## MicroPython ESP32 Asynchronous Hub (uasyncio Architecture)
+
+The micropython/ directory houses the standalone embedded controller designed for low-power ESP32 microcontrollers (e.g., Seeed Studio XIAO ESP32-C5):
+
+- **Event Loop Cooperative Multitasking**: Built on MicroPython's native `uasyncio` engine. Zero blocking `time.sleep()` loops; all delays use `await asyncio.sleep()` to yield CPU cycles.
+- **Single-Digit Millisecond HTTP Responses**: Incoming web requests (`GET /api/devices`, `GET /api/devices/<id>`) are strictly served from the shared in-memory RAM cache (`app_state['units']`), eliminating network roundtrips mid-request.
+- **Decoupled Background Polling Task**: `poll_units_task()` asynchronously probes all 4 Daikin units using non-blocking socket streams (`asyncio.open_connection`), staggered evenly across 16-second intervals to minimize TLS RAM overhead.
+- **SO_REUSEADDR HTTP Server**: The HTTP server runs on port 80 via `asyncio.start_server()` with `SO_REUSEADDR` enabled, preventing socket lockups across warm reboots.
+- **Heap Hygiene & Memory Safety**: Includes a periodic `gc_task(interval_secs=30)` and chunked 1024-byte file streaming with pre-compressed Gzip asset negotiation (`.html.gz`, `.css.gz`, `.js.gz`), keeping RAM usage well within ESP32 headroom.
+- **Robust Network Error Isolation**: All AC network I/O operations are guarded with `try...except (OSError, asyncio.TimeoutError)` blocks, so dropped frames or offline units never crash the event loop or block WebREPL.
+- **Wireless OTA Deployment**: Upload code and web assets wirelessly via WebREPL using a local deploy script (see `deploy_ota.example.ps1`). OTA never touches `boot.py` or `daikin_config.json`.
 
 ## REST API Reference
 
@@ -201,7 +219,6 @@ curl -X POST http://localhost:8080/api/devices/ac_1/control \
   -H "Content-Type: application/json" \
   -d '{"power": true, "mode": "cool", "target_temp": 24.5, "fan_rate": "A"}'
 ```
-
 ---
 
 ## Security & Local Privacy

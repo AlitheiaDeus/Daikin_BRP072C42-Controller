@@ -22,7 +22,19 @@ micropython/daikin_config.json
 *wifi_config*.json
 
 # --- Machine-Specific Launchers & Overrides ---
+# Local buckets (everything inside is git-ignored):
+#   scripts/   local + deployment scripts (WebREPL / USB / mpremote deployers)
+#   internal/  loose documentation, session reports, notes
+#   .agents/   agent supplements
+scripts/
+internal/
+.agents/
+AGENTS.md
+GEMINI.md
+# Legacy root-level locations kept as a safety net
 deploy_ota.ps1
+deploy_usb.ps1
+deploy_mpremote.ps1
 run_local.ps1
 *.local.env
 .env
