@@ -137,7 +137,9 @@ async def async_daikin_request(ip, path, headers=None, port=443, use_ssl=True, t
 
         # 5. Read body up to Content-Length immediately (zero blocking!)
         body_bytes = b""
-        if content_length is not None and content_length > 0:
+        if content_length == 0:
+            body_bytes = b""
+        elif content_length is not None and content_length > 0:
             body_bytes = await asyncio.wait_for(
                 reader.readexactly(content_length),
                 timeout=timeout

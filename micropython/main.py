@@ -162,8 +162,8 @@ async def serve_file(writer, filepath, mime_type, req_headers=None, has_version_
 async def client_handler(reader, writer):
     """Asynchronous HTTP client connection handler coroutine."""
     try:
-        # 1. Asynchronously read HTTP request line
-        req_line = await reader.readline()
+        # 1. Asynchronously read HTTP request line (bounded to prevent stalled sockets)
+        req_line = await asyncio.wait_for(reader.readline(), timeout=5.0)
         if not req_line:
             return
 
@@ -179,7 +179,7 @@ async def client_handler(reader, writer):
         content_length = 0
         req_headers = {}
         while True:
-            hline = await reader.readline()
+            hline = await asyncio.wait_for(reader.readline(), timeout=5.0)
             if not hline or hline in (b"\r\n", b"\n"):
                 break
             line_str = hline.decode("utf-8", "ignore")
@@ -197,7 +197,10 @@ async def client_handler(reader, writer):
         # 3. Asynchronously read request body if present
         body_str = ""
         if content_length > 0:
-            body_bytes = await reader.readexactly(content_length)
+            body_bytes = await asyncio.wait_for(
+                reader.readexactly(content_length),
+                timeout=5.0
+            )
             body_str = body_bytes.decode("utf-8", "ignore")
 
         # 4. Handle CORS preflight OPTIONS
@@ -391,12 +394,17 @@ async def client_handler(reader, writer):
         writer.write(b"HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\nConnection: close\r\n\r\nNot Found")
         await writer.drain()
 
+    except asyncio.TimeoutError:
+        pass
     except Exception as exc:
         print(f"[Client Error] {exc}")
     finally:
-        # STRICT REQUIREMENT: Cleanly drain, close, and wait_closed client writer
+        # STRICT REQUIREMENT: Always close writer even if drain() raises on reset socket
         try:
             await writer.drain()
+        except Exception:
+            pass
+        try:
             writer.close()
             await writer.wait_closed()
         except Exception:
@@ -491,6 +499,50 @@ async def webrepl_tick_task():
         await asyncio.sleep_ms(200)
 
 
+async def wifi_watchdog_task(interval_secs=60):
+    """Periodically verify Wi-Fi association and reconnect cooperatively if dropped."""
+    while True:
+        await asyncio.sleep(interval_secs)
+        try:
+            wlan = network.WLAN(network.STA_IF)
+            if wlan.isconnected() or not hasattr(wlan, "connect"):
+                continue
+
+            cfg = {}
+            try:
+                with open(config.CONFIG_FILE, "r") as f:
+                    cfg = json.load(f)
+            except Exception:
+                pass
+
+            wcfg = cfg.get("wifi", {})
+            known_networks = wcfg.get("networks", [])
+            if not known_networks and wcfg.get("ssid"):
+                known_networks = [(wcfg.get("ssid"), wcfg.get("password", ""))]
+            if not known_networks:
+                continue
+
+            wlan.active(True)
+            try:
+                available = [n[0].decode("utf-8", "ignore") for n in wlan.scan()]
+            except Exception:
+                available = []
+
+            for s, p in known_networks:
+                if not available or s in available:
+                    print(f"[Wi-Fi Watchdog] Reconnecting to '{s}'...")
+                    wlan.connect(s, p)
+                    for _ in range(15):
+                        if wlan.isconnected():
+                            print(f"[Wi-Fi Watchdog] Reconnected! IP: {wlan.ifconfig()[0]}")
+                            break
+                        await asyncio.sleep(1)
+                    if wlan.isconnected():
+                        break
+        except Exception as exc:
+            print(f"[Wi-Fi Watchdog Error] {exc}")
+
+
 # ==============================================================================
 # Application Lifecycle & Entry Point
 # ==============================================================================
@@ -514,7 +566,10 @@ async def main():
     # 3. Spawn lightweight WebREPL heartbeat task
     t_webrepl = asyncio.create_task(webrepl_tick_task())
 
-    # 4. Start non-blocking HTTP server
+    # 4. Spawn cooperative Wi-Fi reconnect watchdog
+    t_wifi = asyncio.create_task(wifi_watchdog_task())
+
+    # 5. Start non-blocking HTTP server
     # Note: MicroPython's uasyncio.start_server creates a non-blocking socket
     # and explicitly executes `s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)`
     # prior to socket binding.
@@ -535,6 +590,7 @@ async def main():
         print("[*] Closing server and background tasks...")
         server.close()
         await server.wait_closed()
+        t_wifi.cancel()
         t_webrepl.cancel()
         t_poll.cancel()
         t_gc.cancel()

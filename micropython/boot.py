@@ -30,7 +30,7 @@ def setup_network():
         sta = network.WLAN(network.STA_IF)
         sta.active(True)
         try:
-            sta.config(pm=network.WLAN.PM_NONE)
+            sta.config(pm=network.WLAN.PM_PERFORMANCE)
         except Exception as e:
             print(f"[!] PM config note: {e}")
         time.sleep(0.5)
